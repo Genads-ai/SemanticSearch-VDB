@@ -2,17 +2,18 @@ from typing import Dict, List, Annotated
 import numpy as np
 import os
 import Indexes.ivf_adc_index as ivf_adc_index
+import Indexes.flat_index as flat_index
+from utilities import compute_recall_at_k
 
 DB_SEED_NUMBER = 42
 ELEMENT_SIZE = np.dtype(np.float32).itemsize
 DIMENSION = 70
 
 class VecDB:
-    def __init__(self, database_file_path = "saved_db.dat", index_file_path = "index.dat", new_db = True, db_size = None,indexing_strategy=None) -> None:
+    def __init__(self, database_file_path = "saved_db.dat", index_file_path = "index.dat", new_db = True, db_size = None) -> None:
         print("Initializing the VecDB")
         self.db_path = database_file_path
         self.index_path = index_file_path
-        self.indexing_strategy = indexing_strategy or ivf_adc_index.IVFADCIndex()
         if new_db:
             if db_size is None:
                 raise ValueError("You need to provide the size of the database")
@@ -79,17 +80,55 @@ class VecDB:
         cosine_similarity = dot_product / (norm_vec1 * norm_vec2)
         return cosine_similarity
 
-    def _build_index(self) -> None:
+    def _build_index(self,indexing_strategy = ivf_adc_index.IVFADCIndex()) -> None:
         vectors = self.get_all_rows()
-        print("Building the index")
-        index_folder = os.path.join(os.getcwd(), "DBIndexes")
-        os.makedirs(index_folder, exist_ok=True)
-        self.indexing_strategy.build_index(vectors)
-        # Save the index
-        self.indexing_strategy.save_index(self.index_path)
+
+        indexing_strategy.build_index(vectors)
+
 
 
 if __name__ == "__main__":
-    db = VecDB(db_size = 10**2)
-    db._build_index()
+    db_size = 10000
+    db_file_path = f"Databases"
+    db_file_name = f"DB_{db_size}.dat"
+    index_file_path = f"DBIndexes"
+    # Turn this flag on if you want to create a new database or create a new index file
+    is_new_db = True
+
+
+    # Create a directory in the parent directory of the current working directory for the databases & indexes
+    if not os.path.exists(db_file_path):
+        os.mkdir(db_file_path)
+    if not os.path.exists(index_file_path):
+        os.mkdir(index_file_path)
+
+    db_file_path = db_file_path + "/" + db_file_name
+
+    # Create a new database
+    vec_db = VecDB(database_file_path=db_file_path, index_file_path=index_file_path, new_db=is_new_db, db_size=db_size)
+
+    ivf_adc_idx = ivf_adc_index.IVFADCIndex().load_index(f"DBIndexes/ivf_adc_index_{db_size}")
+
+    # Build the flat index
+    ground_truth_idx = flat_index.FlatIndex().build_index(vec_db.get_all_rows())
+
+    # Perform a search using the IVFADC index
+    query = np.random.random((10, DIMENSION)).astype(np.float32)
+    k = 5
+    D, I = ivf_adc_idx.search(query, k)
+
+    # Perform an exact search to get ground truth
+    D_exact, I_exact = ground_truth_idx.search(query, k)
+
+    print(f"Nearest neighbors (Ground Truth): {I_exact}")
+    print(f"Distances (Ground Truth): {D_exact}")
+    print(f"Nearest neighbors: {I}")
+    print(f"Distances: {D}")
+
+    # Evaluate recall
+    recall = compute_recall_at_k(I_exact, I, k)
+    print(f"Recall@{k}: {recall:.4f}")
+
+
+
 
