@@ -16,6 +16,7 @@ class VecDB:
         print("Initializing the VecDB")
         self.db_path = database_file_path
         self.index_path = index_file_path
+        self.index = None
         if new_db:
             if db_size is None:
                 raise ValueError("You need to provide the size of the database")
@@ -28,7 +29,7 @@ class VecDB:
         rng = np.random.default_rng(DB_SEED_NUMBER)
         vectors = rng.random((size, DIMENSION), dtype=np.float32)
         self._write_vectors_to_file(vectors)
-        # self._build_index()
+        self.index = self._build_index(ivf_adc_index.IVFADCIndex(db=self,nlist=256,dimension=70))
 
     def _write_vectors_to_file(self, vectors: np.ndarray) -> None:
         mmap_vectors = np.memmap(self.db_path, dtype=np.float32, mode='w+', shape=vectors.shape)
@@ -63,17 +64,23 @@ class VecDB:
         vectors = np.memmap(self.db_path, dtype=np.float32, mode='r', shape=(num_records, DIMENSION))
         return np.array(vectors)
     
-    def retrieve(self, query: Annotated[np.ndarray, (1, DIMENSION)], top_k = 5):
-        scores = []
-        num_records = self._get_num_records()
-        # here we assume that the row number is the ID of each vector
-        for row_num in range(num_records):
-            vector = self.get_one_row(row_num)
-            score = self._cal_score(query, vector)
-            scores.append((score, row_num))
-        # here we assume that if two rows have the same score, return the lowest ID
-        scores = sorted(scores, reverse=True)[:top_k]
-        return [s[1] for s in scores]
+    # def retrieve(self, query: Annotated[np.ndarray, (1, DIMENSION)], top_k = 5):
+    #     scores = []
+    #     num_records = self._get_num_records()
+    #     # here we assume that the row number is the ID of each vector
+    #     for row_num in range(num_records):
+    #         vector = self.get_one_row(row_num)
+    #         score = self._cal_score(query, vector)
+    #         scores.append((score, row_num))
+    #     # here we assume that if two rows have the same score, return the lowest ID
+    #     scores = sorted(scores, reverse=True)[:top_k]
+    #     return [s[1] for s in scores]
+
+    # Define the retrieval function which uses the index to retrieve the nearest neighbors
+    def retrieve(self, query: np.ndarray, top_k: int) -> List[int]:
+        # Search for the nearest neighbors
+        D, I = self.index.search(query, top_k, nprobe=180)
+        return I[0].tolist()
     
     def _cal_score(self, vec1, vec2):
         dot_product = np.dot(vec1, vec2)
@@ -82,8 +89,8 @@ class VecDB:
         cosine_similarity = dot_product / (norm_vec1 * norm_vec2)
         return cosine_similarity
 
-    def _build_index(self,indexing_strategy,nlist=256,dimension=70) -> None:
-        indexing_strategy.build_index()
+    def _build_index(self,indexing_strategy,nlist=256,dimension=70):
+        return indexing_strategy.build_index()
 
 
 
@@ -92,7 +99,7 @@ if __name__ == "__main__":
     db_file_path = f"Databases"
     db_file_name = f"DB_{db_size}.dat"
     index_file_path = f"DBIndexes"
-    # Turn this flag on if you want to create a new database or create a new index file
+    # Turn this flag on if you want to create a new database or create a new index file``
     is_new_db = True
 
 
@@ -112,13 +119,13 @@ if __name__ == "__main__":
     ivf_adc_idx = ivf_adc_index.IVFADCIndex(db=vec_db,nlist=256,dimension=70).build_index()
 
     # Generate random query vector
-    query_vector = np.random.random((20, 70)).astype(np.float32)
+    query_vector = np.random.random((10, 70)).astype(np.float32)
 
     # Search for the nearest neighbors of the query vector
     k = 5
     # Measure the time taken to search for the nearest neighbors
     start_time = timeit.default_timer()
-    D,I = ivf_adc_idx.search(query_vector,db = vec_db, nprobe=50, k=k)
+    D,I = ivf_adc_idx.search(query_vector,db = vec_db, nprobe=100, k=k)
     end_time = timeit.default_timer()
     print(f"Time taken to search for the nearest neighbors: {end_time - start_time:.4f} seconds")
     print(f"Nearest neighbors: {I}")
