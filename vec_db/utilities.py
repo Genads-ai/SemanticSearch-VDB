@@ -1,5 +1,5 @@
 import numpy as np
-
+from memory_profiler import memory_usage
 
 def compute_recall_at_k(ground_truth: np.ndarray, faiss_results: np.ndarray, k: int) -> float:
     """
@@ -49,3 +49,28 @@ def compute_recall_at_k_single_query(ground_truth: np.ndarray, faiss_results: np
     # Calculate recall for the query
     recall = len(ground_truth_set & faiss_result_set) / k
     return recall
+
+def measure_memory_usage(func, *args, **kwargs):
+    """
+    Measure memory usage during the execution of a function.
+
+    Parameters:
+    - func: The target function to measure.
+    - *args: Positional arguments for the target function.
+    - **kwargs: Keyword arguments for the target function.
+
+    Returns:
+    - result: The result of the target function.
+    - memory_diff: The difference in memory usage before and after running the function.
+    """
+    # Record memory usage before execution
+    mem_before = max(memory_usage())
+
+    # Run the function and track memory usage during execution
+    memory_values = memory_usage(proc=(func, args, kwargs), interval=1e-3)
+    
+    result = func(*args, **kwargs)
+    
+    memory_diff = max(memory_values) - mem_before
+
+    return result, memory_diff

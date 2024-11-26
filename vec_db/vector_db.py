@@ -3,7 +3,7 @@ import numpy as np
 import os
 import Indexes.ivf_adc_index as ivf_adc_index
 import Indexes.flat_index as flat_index
-from utilities import compute_recall_at_k
+from utilities import compute_recall_at_k,measure_memory_usage
 import faiss
 import timeit
 
@@ -79,7 +79,7 @@ class VecDB:
     # Define the retrieval function which uses the index to retrieve the nearest neighbors
     def retrieve(self, query: np.ndarray, top_k: int) -> List[int]:
         # Search for the nearest neighbors
-        D, I = self.index.search(query, top_k, nprobe=180)
+        D, I = self.index.search(query, top_k, nprobe=35)
         return I[0].tolist()
     
     def _cal_score(self, vec1, vec2):
@@ -119,17 +119,27 @@ if __name__ == "__main__":
     ivf_adc_idx = ivf_adc_index.IVFADCIndex(db=vec_db,nlist=256,dimension=70).build_index()
 
     # Generate random query vector
-    query_vector = np.random.random((10, 70)).astype(np.float32)
+    nq = 1
+    query_vector = np.random.random((nq, 70)).astype(np.float32)
 
     # Search for the nearest neighbors of the query vector
     k = 5
+    # Measure memory usage
+    memory_usage = measure_memory_usage(ivf_adc_idx.search, query_vector, k,nprobe=35)
+
     # Measure the time taken to search for the nearest neighbors
+
     start_time = timeit.default_timer()
-    D,I = ivf_adc_idx.search(query_vector,db = vec_db, nprobe=100, k=k)
+    result = ivf_adc_idx.search(query_vector, k, nprobe=35)
     end_time = timeit.default_timer()
-    print(f"Time taken to search for the nearest neighbors: {end_time - start_time:.4f} seconds")
+
+
+    D, I = result
+
     print(f"Nearest neighbors: {I}")
-    print(f"Distances: {D}")
+    print(f"Time taken to search for the nearest neighbors: {end_time - start_time:.4f} seconds")
+
+    
 
 
     # Perform an exact search to get ground truth
@@ -138,12 +148,14 @@ if __name__ == "__main__":
     D_exact, I_exact = exact_index.search(query_vector, k)
 
 
-    # Get the exact match from the db using the retrieve function
+    # Get the exact match from the db using the retrieve function   
     print(f"Nearest neighbors (Ground Truth): {I_exact}")
 
     # Evaluate recall
     recall = compute_recall_at_k(I_exact, I, k)
     print(f"Recall@{k}: {recall:.4f}")
+    print(f"Memory usage: {memory_usage[1]:.4f} MB")
+    print(f"Average Time taken to search for the nearest neighbors: {(end_time - start_time)/nq} seconds")
 
 
 

@@ -6,6 +6,7 @@ from sklearn.cluster import KMeans
 from scipy.spatial.distance import cdist
 import memory_profiler
 import timeit
+import tempfile
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utilities import compute_recall_at_k
@@ -68,64 +69,74 @@ class IVFADCIndex(IndexingStrategy):
 
         print("Assignment complete!")
 
-    @memory_profiler.profile
-    def search(self, query, db, k=5, nprobe=1):
+    # @memory_profiler.profile
+
+    def search(self, query, db, k=5, nprobe=1, batch_size=1000):
         """
-        Search for the k nearest neighbors for each query vector.
+        Optimized search for k nearest neighbors using disk-based storage.
         Args:
             query (np.ndarray): Query matrix of shape (num_queries, dimension), where each row is a query vector.
             k (int): Number of nearest neighbors to return for each query vector.
             nprobe (int): Number of clusters to search in.
+            batch_size (int): Number of candidates to process in each decoding batch.
         Returns:
             tuple: Two ndarrays:
                 - distances (np.ndarray): Shape (num_queries, k), containing distances of the k nearest neighbors.
                 - indices (np.ndarray): Shape (num_queries, k), containing indices of the k nearest neighbors in the original vector list.
         """
-        # Compute distances from all queries to centroids
-        cluster_distances = cdist(query, self.centroids)
-        closest_clusters = np.argsort(cluster_distances, axis=1)[:, :nprobe]
+        # Compute distances from queries to centroids
+        cluster_distances = cdist(query, self.centroids)  # Shape: (num_queries, nlist)
+        closest_clusters = np.argsort(cluster_distances, axis=1)[:, :nprobe]  # Shape: (num_queries, nprobe)
 
         all_distances = []
         all_indices = []
 
-        # Process each query vector
         for q_idx, clusters in enumerate(closest_clusters):
-            candidates = []
             candidate_indices = []
 
-            start_time = timeit.default_timer()
-            # Collect candidates from the closest clusters for this query
-            for cluster_id in clusters:
-                candidate_indices.extend(self.index_inverted_lists[cluster_id])
-                candidates.extend(self.pq_inverted_lists[cluster_id])
+            # Temporary file for storing encoded candidates
+            with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                temp_file_path = temp_file.name
 
-            end_time = timeit.default_timer()
-            print(f"Time taken to collect candidates from the closest clusters for query {q_idx}: {end_time - start_time:.4f} seconds")
+            query_vector = query[q_idx].reshape(1, -1)
 
-            # Retrieve the actual candidate vectors
-            candidates = np.array(candidates)
-            decoded_candidates = self.pq.decode(candidates)
+            # Collect candidates from clusters and write them to disk
+            with open(temp_file_path, "wb") as temp_file:
+                for cluster_id in clusters:
+                    candidate_indices.extend(self.index_inverted_lists[cluster_id])
 
-            # Compute distances between the query vector and candidates
-            query_vector = query[q_idx].reshape(1, -1) 
-            distances = cdist(query_vector, decoded_candidates)[0]
+                    # Write PQ codes to disk
+                    cluster_codes = np.array(self.pq_inverted_lists[cluster_id], dtype=np.uint8)
+                    temp_file.write(cluster_codes.tobytes())
+
+            # Decode and process candidates in batches
+            distances = []
+            with open(temp_file_path, "rb") as temp_file:
+                while True:
+                    # Read a chunk of PQ codes
+                    chunk = temp_file.read(batch_size * self.m)
+                    if not chunk:
+                        break
+
+                    pq_batch = np.frombuffer(chunk, dtype=np.uint8).reshape(-1, self.m)
+                    decoded_batch = self.pq.decode(pq_batch)
+
+                    # Compute distances for this batch
+                    batch_distances = cdist(query_vector, decoded_batch)[0]
+                    distances.extend(batch_distances)
 
             # Pair distances with indices and sort by distance
-            start_time = timeit.default_timer()
-            sorted_neighbors = sorted(zip(distances, candidate_indices))[:k]
-            end_time = timeit.default_timer()
-            print(f"Time taken to search for the nearest neighbors: {end_time - start_time:.4f} seconds")
+            sorted_neighbors = sorted(zip(distances, candidate_indices), key=lambda x: x[0])[:k]
 
             # Separate distances and indices
             distances, indices = zip(*sorted_neighbors)
             all_distances.append(list(distances))
             all_indices.append(list(indices))
 
-        # Convert results to ndarrays
-        all_distances = np.array(all_distances)
-        all_indices = np.array(all_indices)
+            # Delete the temporary file
+            os.remove(temp_file_path)
 
-        return all_distances, all_indices
+        return np.array(all_distances), np.array(all_indices)
 
     def build_index(self):
         if os.path.exists(f"DBIndexes/ivf_adc_index_{self.db.get_all_rows().shape[0]}_centroids.npy") and \
