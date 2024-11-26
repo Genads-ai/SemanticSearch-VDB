@@ -4,6 +4,8 @@ import os
 import Indexes.ivf_adc_index as ivf_adc_index
 import Indexes.flat_index as flat_index
 from utilities import compute_recall_at_k
+import faiss
+import timeit
 
 DB_SEED_NUMBER = 42
 ELEMENT_SIZE = np.dtype(np.float32).itemsize
@@ -26,7 +28,7 @@ class VecDB:
         rng = np.random.default_rng(DB_SEED_NUMBER)
         vectors = rng.random((size, DIMENSION), dtype=np.float32)
         self._write_vectors_to_file(vectors)
-        self._build_index()
+        # self._build_index()
 
     def _write_vectors_to_file(self, vectors: np.ndarray) -> None:
         mmap_vectors = np.memmap(self.db_path, dtype=np.float32, mode='w+', shape=vectors.shape)
@@ -80,15 +82,13 @@ class VecDB:
         cosine_similarity = dot_product / (norm_vec1 * norm_vec2)
         return cosine_similarity
 
-    def _build_index(self,indexing_strategy = ivf_adc_index.IVFADCIndex()) -> None:
-        vectors = self.get_all_rows()
-
-        indexing_strategy.build_index(vectors)
+    def _build_index(self,indexing_strategy,nlist=256,dimension=70) -> None:
+        indexing_strategy.build_index()
 
 
 
 if __name__ == "__main__":
-    db_size = 10000
+    db_size = 1_000_000
     db_file_path = f"Databases"
     db_file_name = f"DB_{db_size}.dat"
     index_file_path = f"DBIndexes"
@@ -107,27 +107,42 @@ if __name__ == "__main__":
     # Create a new database
     vec_db = VecDB(database_file_path=db_file_path, index_file_path=index_file_path, new_db=is_new_db, db_size=db_size)
 
-    ivf_adc_idx = ivf_adc_index.IVFADCIndex().load_index(f"DBIndexes/ivf_adc_index_{db_size}")
+    vectors = vec_db.get_all_rows()
 
-    # Build the flat index
-    ground_truth_idx = flat_index.FlatIndex().build_index(vec_db.get_all_rows())
+    ivf_adc_idx = ivf_adc_index.IVFADCIndex(db=vec_db,nlist=256,dimension=70).build_index()
 
-    # Perform a search using the IVFADC index
-    query = np.random.random((10, DIMENSION)).astype(np.float32)
+    # Generate random query vector
+    query_vector = np.random.random((20, 70)).astype(np.float32)
+
+    # Search for the nearest neighbors of the query vector
     k = 5
-    D, I = ivf_adc_idx.search(query, k)
-
-    # Perform an exact search to get ground truth
-    D_exact, I_exact = ground_truth_idx.search(query, k)
-
-    print(f"Nearest neighbors (Ground Truth): {I_exact}")
-    print(f"Distances (Ground Truth): {D_exact}")
+    # Measure the time taken to search for the nearest neighbors
+    start_time = timeit.default_timer()
+    D,I = ivf_adc_idx.search(query_vector,db = vec_db, nprobe=50, k=k)
+    end_time = timeit.default_timer()
+    print(f"Time taken to search for the nearest neighbors: {end_time - start_time:.4f} seconds")
     print(f"Nearest neighbors: {I}")
     print(f"Distances: {D}")
+
+
+    # Perform an exact search to get ground truth
+    exact_index = faiss.IndexFlatL2(70)
+    exact_index.add(vectors)
+    D_exact, I_exact = exact_index.search(query_vector, k)
+
+
+    # Get the exact match from the db using the retrieve function
+    print(f"Nearest neighbors (Ground Truth): {I_exact}")
 
     # Evaluate recall
     recall = compute_recall_at_k(I_exact, I, k)
     print(f"Recall@{k}: {recall:.4f}")
+
+
+
+
+    
+
 
 
 

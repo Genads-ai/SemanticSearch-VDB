@@ -16,7 +16,7 @@ class FlatIndex(IndexingStrategy):
         # Get the size of the vectors
         nq, d = vectors.shape
         # Construct the IVF Index
-        index_f = faiss.index_factory(d, "Flat")
+        index_f = faiss.IndexFlatL2(d)
         index_f.train(vectors)
         index_f.add(vectors)
 
