@@ -18,6 +18,8 @@ class IVFADCIndex(IndexingStrategy):
         Args:
             nlist (int): Number of clusters (Voronoi cells).
             dimension (int): Dimension of the vectors.
+            m (int): Number of subspaces.
+            nbits (int): Number of bits per subvector (determines the number of centroids
         """
         self.nlist = nlist
         self.dimension = dimension
@@ -55,7 +57,7 @@ class IVFADCIndex(IndexingStrategy):
         print("Assigning vectors to clusters...")
         assignments = np.argmin(cdist(self.db.get_all_rows(), self.centroids), axis=1)
         print("Encoding all vectors with PQ...")
-        pq_codes = self.pq.encode(self.db.get_all_rows()).astype(np.uint8)  # Use custom quantizer for encoding
+        pq_codes = self.pq.encode(self.db.get_all_rows()).astype(np.uint8)
 
         # Assign PQ codes and indices to clusters
         for i, cluster_id in enumerate(assignments):
@@ -102,7 +104,6 @@ class IVFADCIndex(IndexingStrategy):
 
             # Retrieve the actual candidate vectors
             candidates = np.array(candidates)
-            print(f"Shape of candidates: {candidates.shape}")
             decoded_candidates = self.pq.decode(candidates)
 
             # Compute distances between the query vector and candidates
@@ -135,8 +136,8 @@ class IVFADCIndex(IndexingStrategy):
 
         nq, d = self.db.get_all_rows().shape
         self.train()
-        self.save_index(f"DBIndexes/ivf_adc_index_{nq}")
         self.add()
+        self.save_index(f"DBIndexes/ivf_adc_index_{nq}")
         return self
 
     def save_index(self, path: str):
