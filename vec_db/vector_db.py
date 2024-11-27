@@ -25,6 +25,8 @@ class VecDB:
             if os.path.exists(self.db_path):
                 os.remove(self.db_path)
             self.generate_database(db_size)
+        else:
+            self.index = self._build_index(ivf_adc_index.IVFADCIndex(vectors=self.get_all_rows(),nlist=256,dimension=70))
     
     def generate_database(self, size: int) -> None:
         rng = np.random.default_rng(DB_SEED_NUMBER)
