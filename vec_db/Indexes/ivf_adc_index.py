@@ -89,6 +89,9 @@ class IVFADCIndex(IndexingStrategy):
         # Not to brag, but this is the most optimized search function in the history of search functions
         # The min heap is doing wonders here 8) : Best ideas come just before you go to sleep
 
+        # If the query is a single vector, we need to reshape it to be a 2D array of shape (1, dimension) to be able to use it in cdist
+        if query.ndim == 1:
+            query = query.reshape(1, -1)
 
         # Here we calculate the distance between the query vectors and the centroids
         # Note that query is a matrix of shape (num_queries, dimension) => it allows us to handle multiple queries at once
