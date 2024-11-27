@@ -12,6 +12,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utilities import compute_recall_at_k
 from Quantizers.product_quantizer import ProductQuantizer 
 import heapq
+import pickle
 
 class IVFADCIndex(IndexingStrategy):
     def __init__(self, vectors, nlist, dimension=70, m=35, nbits=8):
@@ -171,9 +172,7 @@ class IVFADCIndex(IndexingStrategy):
 
     def build_index(self):
         nq = self.vectors.shape[0]
-        if os.path.exists(f"DBIndexes/ivf_adc_index_{nq}_centroids.npy") and \
-           os.path.exists(f"DBIndexes/ivf_adc_index_{nq}_index_inverted_lists.npy") and \
-           os.path.exists(f"DBIndexes/ivf_adc_index_{nq}_pq_inverted_lists.npy"):
+        if os.path.exists(f"DBIndexes/ivf_adc_index_{nq}"):
             self.load_index(f"DBIndexes/ivf_adc_index_{nq}")
             return self
 
@@ -181,18 +180,23 @@ class IVFADCIndex(IndexingStrategy):
         self.add()
         self.save_index(f"DBIndexes/ivf_adc_index_{nq}")
         return self
-
+            
     def save_index(self, path: str):
         """
-        Save this masterpiece to a file so we don’t have to redo it all over again.
+        Save this masterpiece to a single file so we don’t have to keep track of multiple files.
         Args:
             path (str): Where to save the genius work.
         """
         print(f"Saving index to {path}")
-        np.save(f"{path}_centroids.npy", self.centroids)
-        np.save(f"{path}_index_inverted_lists.npy", self.index_inverted_lists)
-        np.save(f"{path}_pq_inverted_lists.npy", self.pq_inverted_lists)
-        self.pq.save(f"{path}_pq_quantizer.pkl")
+        data = {
+            "centroids": self.centroids,
+            "index_inverted_lists": self.index_inverted_lists,
+            "pq_inverted_lists": self.pq_inverted_lists,
+            "pq": self.pq,
+        }
+        with open(path, "wb") as f:
+            pickle.dump(data, f)
+        print("Index saved successfully!")
 
     def load_index(self, path: str):
         """
@@ -200,8 +204,12 @@ class IVFADCIndex(IndexingStrategy):
         Args:
             path (str): Where you last left your precious index.
         """
-        self.centroids = np.load(f"{path}_centroids.npy")
-        self.index_inverted_lists = np.load(f"{path}_index_inverted_lists.npy", allow_pickle=True).item()
-        self.pq_inverted_lists = np.load(f"{path}_pq_inverted_lists.npy", allow_pickle=True).item()
-        self.pq = self.pq.load(f"{path}_pq_quantizer.pkl")
+        print(f"Loading index from {path}")
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+        self.centroids = data["centroids"]
+        self.index_inverted_lists = data["index_inverted_lists"]
+        self.pq_inverted_lists = data["pq_inverted_lists"]
+        self.pq = data["pq"]
+        print("Index loaded successfully!")
         return self
