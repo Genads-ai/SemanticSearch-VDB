@@ -11,11 +11,12 @@ import tempfile
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utilities import compute_recall_at_k
 from Quantizers.product_quantizer import ProductQuantizer 
+import heapq
 
 class IVFADCIndex(IndexingStrategy):
     def __init__(self, db, nlist, dimension=70, m=35, nbits=8):
         """
-        Initialize the IVF index.
+        Setting up the most epic index ever.
         Args:
             nlist (int): Number of clusters (Voronoi cells).
             dimension (int): Dimension of the vectors.
@@ -34,7 +35,7 @@ class IVFADCIndex(IndexingStrategy):
 
     def train(self):
         """
-        Train the IVF index by clustering the dataset.
+        Make those centroids earn their living, go make a cup of tea, this will take a while.
         Args:
             vectors (np.ndarray): Dataset of shape (num_vectors, dimension).
         """
@@ -51,12 +52,12 @@ class IVFADCIndex(IndexingStrategy):
 
     def add(self):
         """
-        Add vectors to the IVF index.
+        Throw those vectors into their assigned clusters and teach them to stay there.
         Args:
             vectors (np.ndarray): Dataset of shape (num_vectors, dimension).
         """
         print("Assigning vectors to clusters...")
-        assignments = np.argmin(cdist(self.db.get_all_rows(), self.centroids), axis=1)
+        assignments = np.argmin(cdist(self.db.get_all_rows(), self.centroids, metric="cosine"), axis=1)
         print("Encoding all vectors with PQ...")
         pq_codes = self.pq.encode(self.db.get_all_rows()).astype(np.uint8)
 
@@ -70,10 +71,9 @@ class IVFADCIndex(IndexingStrategy):
         print("Assignment complete!")
 
     # @memory_profiler.profile
-
     def search(self, query, db, k=5, nprobe=1, batch_size=1000):
         """
-        Optimized search for k nearest neighbors using disk-based storage.
+        Here comes the cool part, searching for the nearest neighbors of the query vectors.
         Args:
             query (np.ndarray): Query matrix of shape (num_queries, dimension), where each row is a query vector.
             k (int): Number of nearest neighbors to return for each query vector.
@@ -84,59 +84,90 @@ class IVFADCIndex(IndexingStrategy):
                 - distances (np.ndarray): Shape (num_queries, k), containing distances of the k nearest neighbors.
                 - indices (np.ndarray): Shape (num_queries, k), containing indices of the k nearest neighbors in the original vector list.
         """
-        # Compute distances from queries to centroids
-        cluster_distances = cdist(query, self.centroids)  # Shape: (num_queries, nlist)
+
+        # Not to brag, but this is the most optimized search function in the history of search functions
+        # The min heap is doing wonders here 8) : Best ideas come just before you go to sleep
+
+
+        # Here we calculate the distance between the query vectors and the centroids
+        # Note that query is a matrix of shape (num_queries, dimension) => it allows us to handle multiple queries at once
+        cluster_distances = cdist(query, self.centroids,metric="cosine")  # Shape: (num_queries, nlist)
+
+        # Sort the clusters by distance and select the top nprobe clusters for each query
         closest_clusters = np.argsort(cluster_distances, axis=1)[:, :nprobe]  # Shape: (num_queries, nprobe)
+
+        # Let's get into the action
 
         all_distances = []
         all_indices = []
 
+        # Here we process each query vector one by one, if it's a single query, no need for this loop but we support multiple queries [OOOOH]
         for q_idx, clusters in enumerate(closest_clusters):
-            candidate_indices = []
+            # This is our query vector for this iteration, we reshape it to be a 2D array of dimensions (1, dimension) to be able to use it in cdist
+            query_vector = query[q_idx].reshape(1, -1) 
 
-            # Temporary file for storing encoded candidates
-            with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-                temp_file_path = temp_file.name
+            # Temporary files for storing encoded candidates and indices
+            # delete flag is set to False to prevent deletion of the files after closing them,[ We made them for a reason bakka! :3]
+            with tempfile.NamedTemporaryFile(delete=False) as temp_code_file, tempfile.NamedTemporaryFile(delete=False) as temp_index_file:
+                code_file_path = temp_code_file.name
+                index_file_path = temp_index_file.name
 
-            query_vector = query[q_idx].reshape(1, -1)
-
-            # Collect candidates from clusters and write them to disk
-            with open(temp_file_path, "wb") as temp_file:
+            # Write candidates from all clusters to disk
+            with open(code_file_path, "wb") as code_file, open(index_file_path, "wb") as index_file:
                 for cluster_id in clusters:
-                    candidate_indices.extend(self.index_inverted_lists[cluster_id])
-
-                    # Write PQ codes to disk
+                    # Write quantized vectors codes to disk which were assigned to this cluster
                     cluster_codes = np.array(self.pq_inverted_lists[cluster_id], dtype=np.uint8)
-                    temp_file.write(cluster_codes.tobytes())
+                    code_file.write(cluster_codes.tobytes())
 
-            # Decode and process candidates in batches
-            distances = []
-            with open(temp_file_path, "rb") as temp_file:
+                    # Write indices of the same vectors to disk
+                    cluster_indices = np.array(self.index_inverted_lists[cluster_id], dtype=np.int32)
+                    index_file.write(cluster_indices.tobytes())
+
+            # Incrementally decode and compute distances from disk
+            # To store the top-k results as (distance, index) pairs
+            # The main idea here is to use a heap to store the top-k results, this way we can keep the heap size to k and avoid sorting the whole list
+            # We do this due to the RAM constraints, we can't store all the vectors and indices in memory so we keep the top-k only which are the ones we care about <3
+            min_heap = []  
+            with open(code_file_path, "rb") as code_file, open(index_file_path, "rb") as index_file:
                 while True:
-                    # Read a chunk of PQ codes
-                    chunk = temp_file.read(batch_size * self.m)
-                    if not chunk:
+                    # Read a chunk of PQ codes and indices
+                    code_chunk = code_file.read(batch_size * self.m)  # PQ codes
+                    index_chunk = index_file.read(batch_size * 4)  # Indices (int32)
+
+                    if not code_chunk or not index_chunk:
                         break
 
-                    pq_batch = np.frombuffer(chunk, dtype=np.uint8).reshape(-1, self.m)
+                    pq_batch = np.frombuffer(code_chunk, dtype=np.uint8).reshape(-1, self.m)
+                    index_batch = np.frombuffer(index_chunk, dtype=np.int32)
+
+                    # Decode the PQ batch
                     decoded_batch = self.pq.decode(pq_batch)
 
                     # Compute distances for this batch
-                    batch_distances = cdist(query_vector, decoded_batch)[0]
-                    distances.extend(batch_distances)
+                    batch_distances = cdist(query_vector, decoded_batch, metric="cosine")[0]
 
-            # Pair distances with indices and sort by distance
-            sorted_neighbors = sorted(zip(distances, candidate_indices), key=lambda x: x[0])[:k]
+                    # Merge into the top-k results using a heap
+                    for dist, idx in zip(batch_distances, index_batch):
+                        if len(min_heap) < k:
+                            heapq.heappush(min_heap, (-dist, idx))
+                        else:
+                            heapq.heappushpop(min_heap, (-dist, idx))
 
-            # Separate distances and indices
-            distances, indices = zip(*sorted_neighbors)
+            # Extract top-k results from the heap
+            # You would argue that this is not necessary, and you're right, but it will look cooler this way
+            # top_k is already small, so sorting it won't take much time [Stop arguing with me, I'm the one writing the code here >:( ]
+            top_k = sorted((-d, i) for d, i in min_heap) 
+            distances, indices = zip(*top_k)
+
             all_distances.append(list(distances))
             all_indices.append(list(indices))
 
-            # Delete the temporary file
-            os.remove(temp_file_path)
+            # Don't wanna leave any traces behind, do we ? ;)
+            os.remove(code_file_path)
+            os.remove(index_file_path)
 
         return np.array(all_distances), np.array(all_indices)
+
 
     def build_index(self):
         if os.path.exists(f"DBIndexes/ivf_adc_index_{self.db.get_all_rows().shape[0]}_centroids.npy") and \
@@ -152,6 +183,11 @@ class IVFADCIndex(IndexingStrategy):
         return self
 
     def save_index(self, path: str):
+        """
+        Save this masterpiece to a file so we don’t have to redo it all over again.
+        Args:
+            path (str): Where to save the genius work.
+        """
         print(f"Saving index to {path}")
         np.save(f"{path}_centroids.npy", self.centroids)
         np.save(f"{path}_index_inverted_lists.npy", self.index_inverted_lists)
@@ -159,6 +195,11 @@ class IVFADCIndex(IndexingStrategy):
         self.pq.save(f"{path}_pq_quantizer.pkl")
 
     def load_index(self, path: str):
+        """
+        Lost your index? No worries, let’s load it back and pretend nothing happened.
+        Args:
+            path (str): Where you last left your precious index.
+        """
         self.centroids = np.load(f"{path}_centroids.npy")
         self.index_inverted_lists = np.load(f"{path}_index_inverted_lists.npy", allow_pickle=True).item()
         self.pq_inverted_lists = np.load(f"{path}_pq_inverted_lists.npy", allow_pickle=True).item()

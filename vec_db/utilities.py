@@ -1,5 +1,6 @@
 import numpy as np
 from memory_profiler import memory_usage
+from scipy.spatial.distance import cdist
 
 def compute_recall_at_k(ground_truth: np.ndarray, faiss_results: np.ndarray, k: int) -> float:
     """

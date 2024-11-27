@@ -10,6 +10,7 @@ import timeit
 DB_SEED_NUMBER = 42
 ELEMENT_SIZE = np.dtype(np.float32).itemsize
 DIMENSION = 70
+N_PROBE = 70
 
 class VecDB:
     def __init__(self, database_file_path = "saved_db.dat", index_file_path = "index.dat", new_db = True, db_size = None) -> None:
@@ -79,7 +80,7 @@ class VecDB:
     # Define the retrieval function which uses the index to retrieve the nearest neighbors
     def retrieve(self, query: np.ndarray, top_k: int) -> List[int]:
         # Search for the nearest neighbors
-        D, I = self.index.search(query, top_k, nprobe=35)
+        D, I = self.index.search(query, top_k, nprobe=N_PROBE)
         return I[0].tolist()
     
     def _cal_score(self, vec1, vec2):
@@ -125,12 +126,12 @@ if __name__ == "__main__":
     # Search for the nearest neighbors of the query vector
     k = 5
     # Measure memory usage
-    memory_usage = measure_memory_usage(ivf_adc_idx.search, query_vector, k,nprobe=35)
+    memory_usage = measure_memory_usage(ivf_adc_idx.search, query_vector, k,nprobe=N_PROBE)
 
     # Measure the time taken to search for the nearest neighbors
 
     start_time = timeit.default_timer()
-    result = ivf_adc_idx.search(query_vector, k, nprobe=35)
+    result = ivf_adc_idx.search(query_vector, k, nprobe=N_PROBE)
     end_time = timeit.default_timer()
 
 
