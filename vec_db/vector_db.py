@@ -13,7 +13,7 @@ DIMENSION = 70
 N_PROBE = 70
 
 class VecDB:
-    def __init__(self, database_file_path = "saved_db.dat", index_file_path = "index.dat", new_db = True, db_size = None) -> None:
+    def __init__(self, database_file_path = "Databases/DB_1000000.dat", index_file_path = "index.dat", new_db = True, db_size = None) -> None:
         print("Initializing the VecDB")
         self.db_path = database_file_path
         self.index_path = index_file_path
@@ -30,7 +30,7 @@ class VecDB:
         rng = np.random.default_rng(DB_SEED_NUMBER)
         vectors = rng.random((size, DIMENSION), dtype=np.float32)
         self._write_vectors_to_file(vectors)
-        self.index = self._build_index(ivf_adc_index.IVFADCIndex(db=self,nlist=256,dimension=70))
+        self.index = self._build_index(ivf_adc_index.IVFADCIndex(vectors=self.get_all_rows(),nlist=256,dimension=70))
 
     def _write_vectors_to_file(self, vectors: np.ndarray) -> None:
         mmap_vectors = np.memmap(self.db_path, dtype=np.float32, mode='w+', shape=vectors.shape)
@@ -115,10 +115,6 @@ if __name__ == "__main__":
     # Create a new database
     vec_db = VecDB(database_file_path=db_file_path, index_file_path=index_file_path, new_db=is_new_db, db_size=db_size)
 
-    vectors = vec_db.get_all_rows()
-
-    ivf_adc_idx = ivf_adc_index.IVFADCIndex(db=vec_db,nlist=256,dimension=70).build_index()
-
     # Generate random query vector
     nq = 1
     query_vector = np.random.random((nq, 70)).astype(np.float32)
@@ -126,35 +122,15 @@ if __name__ == "__main__":
     # Search for the nearest neighbors of the query vector
     k = 5
     # Measure memory usage
-    memory_usage = measure_memory_usage(ivf_adc_idx.search, query_vector, k,nprobe=N_PROBE)
+    memory_usage = measure_memory_usage(vec_db.retrieve, query_vector, k)
 
     # Measure the time taken to search for the nearest neighbors
 
     start_time = timeit.default_timer()
-    result = ivf_adc_idx.search(query_vector, k, nprobe=N_PROBE)
+    result = vec_db.retrieve(query_vector, k)
     end_time = timeit.default_timer()
 
-
-    D, I = result
-
-    print(f"Nearest neighbors: {I}")
     print(f"Time taken to search for the nearest neighbors: {end_time - start_time:.4f} seconds")
-
-    
-
-
-    # Perform an exact search to get ground truth
-    exact_index = faiss.IndexFlatL2(70)
-    exact_index.add(vectors)
-    D_exact, I_exact = exact_index.search(query_vector, k)
-
-
-    # Get the exact match from the db using the retrieve function   
-    print(f"Nearest neighbors (Ground Truth): {I_exact}")
-
-    # Evaluate recall
-    recall = compute_recall_at_k(I_exact, I, k)
-    print(f"Recall@{k}: {recall:.4f}")
     print(f"Memory usage: {memory_usage[1]:.4f} MB")
     print(f"Average Time taken to search for the nearest neighbors: {(end_time - start_time)/nq} seconds")
 

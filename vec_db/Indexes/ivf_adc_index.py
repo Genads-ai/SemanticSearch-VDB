@@ -14,7 +14,7 @@ from Quantizers.product_quantizer import ProductQuantizer
 import heapq
 
 class IVFADCIndex(IndexingStrategy):
-    def __init__(self, db, nlist, dimension=70, m=35, nbits=8):
+    def __init__(self, vectors, nlist, dimension=70, m=35, nbits=8):
         """
         Setting up the most epic index ever.
         Args:
@@ -26,7 +26,7 @@ class IVFADCIndex(IndexingStrategy):
         self.nlist = nlist
         self.dimension = dimension
         self.centroids = None
-        self.db = db
+        self.vectors = vectors
         self.m = m
         self.nbits = nbits
         self.index_inverted_lists = {i: [] for i in range(nlist)}
@@ -41,13 +41,13 @@ class IVFADCIndex(IndexingStrategy):
         """
         print("Training the IVF index using k-means...")
         kmeans = KMeans(n_clusters=self.nlist, random_state=42)
-        kmeans.fit(self.db.get_all_rows())
+        kmeans.fit(self.vectors)
         self.centroids = kmeans.cluster_centers_
         print("Training complete!")
 
         # Train the custom PQ quantizer
         print("Training the custom PQ quantizer...")
-        self.pq.train(self.db.get_all_rows())
+        self.pq.train(self.vectors)
         print("Training custom PQ quantizer complete!")
 
     def add(self):
@@ -57,9 +57,9 @@ class IVFADCIndex(IndexingStrategy):
             vectors (np.ndarray): Dataset of shape (num_vectors, dimension).
         """
         print("Assigning vectors to clusters...")
-        assignments = np.argmin(cdist(self.db.get_all_rows(), self.centroids, metric="cosine"), axis=1)
+        assignments = np.argmin(cdist(self.vectors, self.centroids, metric="cosine"), axis=1)
         print("Encoding all vectors with PQ...")
-        pq_codes = self.pq.encode(self.db.get_all_rows()).astype(np.uint8)
+        pq_codes = self.pq.encode(self.vectors).astype(np.uint8)
 
         # Assign PQ codes and indices to clusters
         for i, cluster_id in enumerate(assignments):
@@ -170,13 +170,13 @@ class IVFADCIndex(IndexingStrategy):
 
 
     def build_index(self):
-        if os.path.exists(f"DBIndexes/ivf_adc_index_{self.db.get_all_rows().shape[0]}_centroids.npy") and \
-           os.path.exists(f"DBIndexes/ivf_adc_index_{self.db.get_all_rows().shape[0]}_index_inverted_lists.npy") and \
-           os.path.exists(f"DBIndexes/ivf_adc_index_{self.db.get_all_rows().shape[0]}_pq_inverted_lists.npy"):
-            self.load_index(f"DBIndexes/ivf_adc_index_{self.db.get_all_rows().shape[0]}")
+        nq = self.vectors.shape[0]
+        if os.path.exists(f"DBIndexes/ivf_adc_index_{nq}_centroids.npy") and \
+           os.path.exists(f"DBIndexes/ivf_adc_index_{nq}_index_inverted_lists.npy") and \
+           os.path.exists(f"DBIndexes/ivf_adc_index_{nq}_pq_inverted_lists.npy"):
+            self.load_index(f"DBIndexes/ivf_adc_index_{nq}")
             return self
 
-        nq, d = self.db.get_all_rows().shape
         self.train()
         self.add()
         self.save_index(f"DBIndexes/ivf_adc_index_{nq}")
