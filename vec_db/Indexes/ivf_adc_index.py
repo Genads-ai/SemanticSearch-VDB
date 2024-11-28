@@ -72,7 +72,7 @@ class IVFADCIndex(IndexingStrategy):
         print("Assignment complete!")
 
     # @memory_profiler.profile
-    def search(self, query, db, k=5, nprobe=1, batch_size=1000):
+    def search(self, query, k=5, nprobe=1, batch_size=2500):
         """
         Here comes the cool part, searching for the nearest neighbors of the query vectors.
         Args:
