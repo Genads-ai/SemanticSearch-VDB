@@ -13,9 +13,13 @@ from utilities import compute_recall_at_k
 from Quantizers.product_quantizer import ProductQuantizer 
 import heapq
 import pickle
+import tensorflow as tf
+from tensorflow.keras import layers, models
+from tensorflow.keras.models import Model
+from tensorflow.keras.models import load_model
 
 class IVFADCIndex(IndexingStrategy):
-    def __init__(self, vectors, nlist, dimension=70, m=35, nbits=8):
+    def __init__(self, vectors, nlist, dimension=70, m=10, nbits=8):
         """
         Setting up the most epic index ever.
         Args:
@@ -32,7 +36,43 @@ class IVFADCIndex(IndexingStrategy):
         self.nbits = nbits
         self.index_inverted_lists = {i: [] for i in range(nlist)}
         self.pq_inverted_lists = {i: np.empty((0, self.m), dtype=np.uint8) for i in range(nlist)}
-        self.pq = ProductQuantizer(self.dimension, self.m, self.nbits) 
+        # self.pq = ProductQuantizer(self.dimension, self.m, self.nbits) 
+        self.pq = ProductQuantizer(20, self.m, self.nbits) 
+
+        # Load the autoencoder model
+        loaded_autoencoder = tf.keras.models.load_model(
+            'C:/Users/MaestroXII/CMP/IV/ADB/Project/SemanticSearch-VDB/vec_db/Indexes/autoencoder_model_1000000.keras'
+        )
+
+        encoder_layer = models.Model(loaded_autoencoder.input, loaded_autoencoder.get_layer('latent_space').output)
+
+        # Extract the decoder model from the autoencoder
+        decoder_input = tf.keras.layers.Input(shape=(20,)) 
+        decoder_layer_1 = loaded_autoencoder.get_layer('decoder_dense_1')
+        decoder_output_1 = decoder_layer_1(decoder_input)
+        decoder_layer_2 = loaded_autoencoder.get_layer('decoder_dense_2')
+        decoder_output_2 = decoder_layer_2(decoder_output_1)
+        decoder_layer_3 = loaded_autoencoder.get_layer('decoder_dense_3')
+        decoder_output_3 = decoder_layer_3(decoder_output_2)
+        decoder_layer_4 = loaded_autoencoder.get_layer('decoder_dense_4')
+        decoder_output_4 = decoder_layer_4(decoder_output_3)
+        decoder_layer_5 = loaded_autoencoder.get_layer('decoder_dense_5')
+        decoder_output_5 = decoder_layer_5(decoder_output_4)
+        decoder_layer_6 = loaded_autoencoder.get_layer('decoder_dense_6')
+        decoder_output_6 = decoder_layer_6(decoder_output_5)
+        decoder_layer_7 = loaded_autoencoder.get_layer('decoder_dense_7')
+        decoder_output_7 = decoder_layer_7(decoder_output_6)
+        decoder_layer_8 = loaded_autoencoder.get_layer('decoder_dense_8')
+        decoder_output_8 = decoder_layer_8(decoder_output_7)
+        decoder_layer_9 = loaded_autoencoder.get_layer('decoder_dense_9')
+        decoder_output_9 = decoder_layer_9(decoder_output_8)
+        decoder_output = loaded_autoencoder.get_layer('output_layer')(decoder_output_9)
+        # Create the decoder model with the new input and final output
+        self.decoder_layer = models.Model(decoder_input, decoder_output)
+
+        # Use the encoder to encode the input vectors
+        self.pq_encoded_vectors = encoder_layer.predict(self.vectors)
+
 
     def train(self):
         """
@@ -48,7 +88,7 @@ class IVFADCIndex(IndexingStrategy):
 
         # Train the custom PQ quantizer
         print("Training the custom PQ quantizer...")
-        self.pq.train(self.vectors)
+        self.pq.train(self.pq_encoded_vectors)
         print("Training custom PQ quantizer complete!")
 
     def add(self):
@@ -60,7 +100,7 @@ class IVFADCIndex(IndexingStrategy):
         print("Assigning vectors to clusters...")
         assignments = np.argmin(cdist(self.vectors, self.centroids, metric="cosine"), axis=1)
         print("Encoding all vectors with PQ...")
-        pq_codes = self.pq.encode(self.vectors).astype(np.uint8)
+        pq_codes = self.pq.encode(self.pq_encoded_vectors).astype(np.uint8)
 
         # Assign PQ codes and indices to clusters
         for i, cluster_id in enumerate(assignments):
@@ -146,6 +186,8 @@ class IVFADCIndex(IndexingStrategy):
 
                     # Decode the PQ batch
                     decoded_batch = self.pq.decode(pq_batch)
+
+                    decoded_batch = self.decoder_layer.predict(decoded_batch)
 
                     # Compute distances for this batch
                     batch_distances = cdist(query_vector, decoded_batch, metric="cosine")[0]
