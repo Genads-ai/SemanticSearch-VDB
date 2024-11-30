@@ -10,7 +10,7 @@ import timeit
 DB_SEED_NUMBER = 42
 ELEMENT_SIZE = np.dtype(np.float32).itemsize
 DIMENSION = 70
-N_PROBE = 15
+N_PROBE = 50
 
 class VecDB:
     def __init__(self, database_file_path = "Databases/DB_1000000.dat", index_file_path = "index.dat", new_db = True, db_size = None) -> None:
@@ -102,7 +102,7 @@ if __name__ == "__main__":
     db_file_path = f"Databases"
     db_file_name = f"DB_{db_size}.dat"
     index_file_path = f"DBIndexes"
-    # Turn this flag on if you want to create a new database or create a new index file``
+    # Turn this flag on if you want to create a new database or create a new index file
     is_new_db = True
 
 
@@ -135,13 +135,3 @@ if __name__ == "__main__":
     print(f"Time taken to search for the nearest neighbors: {end_time - start_time:.4f} seconds")
     print(f"Memory usage: {memory_usage[1]:.4f} MB")
     print(f"Average Time taken to search for the nearest neighbors: {(end_time - start_time)/nq} seconds")
-
-
-
-
-    
-
-
-
-
-

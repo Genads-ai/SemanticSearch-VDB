@@ -7,6 +7,8 @@ from scipy.spatial.distance import cdist
 import memory_profiler
 import timeit
 import tempfile
+import faiss
+from joblib import Parallel, delayed
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utilities import compute_recall_at_k
@@ -41,9 +43,9 @@ class IVFADCIndex(IndexingStrategy):
             vectors (np.ndarray): Dataset of shape (num_vectors, dimension).
         """
         print("Training the IVF index using k-means...")
-        kmeans = KMeans(n_clusters=self.nlist, random_state=42)
-        kmeans.fit(self.vectors)
-        self.centroids = kmeans.cluster_centers_
+        kmeans = faiss.Kmeans(d=self.dimension, k=self.nlist, verbose=True)
+        kmeans.train(self.vectors)
+        self.centroids = kmeans.centroids
         print("Training complete!")
 
         # Train the custom PQ quantizer
@@ -57,8 +59,27 @@ class IVFADCIndex(IndexingStrategy):
         Args:
             vectors (np.ndarray): Dataset of shape (num_vectors, dimension).
         """
+
+        # Parallelization of determining the closest centroid to the vector to be assigned to it
+        # assignments = np.argmin(cdist(self.vectors, self.centroids, metric="cosine"), axis=1)
+ 
+        def process_batch(start_idx, end_idx):
+            print(f"Processing batch {start_idx // batch_size + 1}...")
+            batch_vectors = self.vectors[start_idx:end_idx]
+            distances = cdist(batch_vectors, self.centroids, metric="cosine")
+            return np.argmin(distances, axis=1)
         print("Assigning vectors to clusters...")
-        assignments = np.argmin(cdist(self.vectors, self.centroids, metric="cosine"), axis=1)
+        batch_size = 100_000
+        num_vectors = self.vectors.shape[0]
+        assignments = np.empty(num_vectors, dtype=np.int32)
+
+        batch_indices = [(i, min(i + batch_size, num_vectors)) for i in range(0, num_vectors, batch_size)]
+
+        # Parallelize batch processing
+        results = Parallel(n_jobs=-1)(delayed(process_batch)(start, end) for start, end in batch_indices)
+        assignments = np.concatenate(results)
+
+
         print("Encoding all vectors with PQ...")
         pq_codes = self.pq.encode(self.vectors).astype(np.uint8)
 
@@ -72,7 +93,7 @@ class IVFADCIndex(IndexingStrategy):
         print("Assignment complete!")
 
     # @memory_profiler.profile
-    def search(self, query, k=5, nprobe=1, batch_size=2500):
+    def search(self, query, k=5, nprobe=1, batch_size=2000):
         """
         Here comes the cool part, searching for the nearest neighbors of the query vectors.
         Args:
