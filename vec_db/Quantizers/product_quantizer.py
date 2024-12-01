@@ -2,6 +2,8 @@ import numpy as np
 from sklearn.cluster import KMeans
 import pickle
 from scipy.spatial.distance import cdist
+import faiss
+from joblib import Parallel, delayed
 
 class ProductQuantizer:
     def __init__(self, dimension, m, nbits):
@@ -29,11 +31,21 @@ class ProductQuantizer:
         assert dimension == self.dimension, "Data dimension does not match PQ dimension."
 
         self.centroids = []
+        # for i in range(self.m):
+        #     subspace_data = data[:, i * self.subvector_dim : (i + 1) * self.subvector_dim]
+        #     kmeans = KMeans(n_clusters=self.k, random_state=42)
+        #     kmeans.fit(subspace_data)
+        #     self.centroids.append(kmeans.cluster_centers_)
+
         for i in range(self.m):
-            subspace_data = data[:, i * self.subvector_dim : (i + 1) * self.subvector_dim]
+            # Extract subspace data
+            subspace_data = data[:, i * self.subvector_dim: (i + 1) * self.subvector_dim]
+            
+            # Initialize FAISS KMeans for the subspace
             kmeans = KMeans(n_clusters=self.k, random_state=42)
             kmeans.fit(subspace_data)
             self.centroids.append(kmeans.cluster_centers_)
+            
 
     def encode(self, data):
         """
@@ -43,18 +55,37 @@ class ProductQuantizer:
         Returns:
             np.ndarray: PQ codes of shape (num_vectors, m) with dtype=np.uint8.
         """
+        def compute_distances_and_codes(subspace_batch, centroids, start_index, i):
+            print(f"Processing batch starting at index {start_index} for subspace {i}...")
+            distances = cdist(subspace_batch, centroids, metric='euclidean')
+            codes = np.argmin(distances, axis=1)
+            return range(start_index, start_index + len(codes)), codes
+
         num_vectors, dimension = data.shape
         assert dimension == self.dimension, "Data dimension does not match PQ dimension."
 
         codes = np.empty((num_vectors, self.m), dtype=np.uint8)
         for i in range(self.m):
             subspace_data = data[:, i * self.subvector_dim : (i + 1) * self.subvector_dim]
+            centroids = self.centroids[i]
             
             # Compute pairwise distances between each subvector and centroids
-            distances = cdist(subspace_data, self.centroids[i], metric='euclidean')
+            # The following is the paralleization of this line using joblib
+            # distances = cdist(subspace_data, self.centroids[i], metric='euclidean')
+
+            # Split subspace data into smaller chunks for parallel processing
+            batch_size = 100_000
+            num_vectors = subspace_data.shape[0]
+            batch_indices = [(j, min(j + batch_size, num_vectors)) for j in range(0, num_vectors, batch_size)]
+                
+            # Parallel computation of distances
+            results = Parallel(n_jobs=-1)(
+            delayed(compute_distances_and_codes)(subspace_data[start:end], centroids, start, i)
+                for start, end in batch_indices
+            )
             
-            # Assign each subvector to the closest centroid
-            codes[:, i] = np.argmin(distances, axis=1)
+            for indices, batch_codes in results:
+                codes[indices, i] = batch_codes
 
         return codes
     

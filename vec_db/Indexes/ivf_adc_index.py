@@ -17,11 +17,11 @@ import heapq
 import pickle
 
 class IVFADCIndex(IndexingStrategy):
-    def __init__(self, vectors, nlist, dimension=70, m=35, nbits=8):
+    def __init__(self, vectors, nlist, dimension=70, m=7, nbits=8):
         """
         Setting up the most epic index ever.
         Args:
-            nlist (int): Number of clusters (Voronoi cells).
+            nlist (int): Number of clusters (Voronoi cells).    
             dimension (int): Dimension of the vectors.
             m (int): Number of subspaces.
             nbits (int): Number of bits per subvector (determines the number of centroids
@@ -43,9 +43,9 @@ class IVFADCIndex(IndexingStrategy):
             vectors (np.ndarray): Dataset of shape (num_vectors, dimension).
         """
         print("Training the IVF index using k-means...")
-        kmeans = faiss.Kmeans(d=self.dimension, k=self.nlist, verbose=True)
-        kmeans.train(self.vectors)
-        self.centroids = kmeans.centroids
+        kmeans = KMeans(n_clusters=self.nlist, random_state=42)
+        kmeans.fit(self.vectors)
+        self.centroids = kmeans.cluster_centers_
         print("Training complete!")
 
         # Train the custom PQ quantizer
@@ -73,6 +73,7 @@ class IVFADCIndex(IndexingStrategy):
         num_vectors = self.vectors.shape[0]
         assignments = np.empty(num_vectors, dtype=np.int32)
 
+        # This min function is used to handle the case where the number of vectors is not divisible by the batch size in the last batch
         batch_indices = [(i, min(i + batch_size, num_vectors)) for i in range(0, num_vectors, batch_size)]
 
         # Parallelize batch processing

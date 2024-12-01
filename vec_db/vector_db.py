@@ -3,14 +3,14 @@ import numpy as np
 import os
 import Indexes.ivf_adc_index as ivf_adc_index
 import Indexes.flat_index as flat_index
-from utilities import compute_recall_at_k,measure_memory_usage
+from utilities import compute_recall_at_k,measure_memory_usage,measure_io_operations
 import faiss
 import timeit
 
 DB_SEED_NUMBER = 42
 ELEMENT_SIZE = np.dtype(np.float32).itemsize
 DIMENSION = 70
-N_PROBE = 50
+N_PROBE = 15
 
 class VecDB:
     def __init__(self, database_file_path = "Databases/DB_1000000.dat", index_file_path = "index.dat", new_db = True, db_size = None) -> None:
@@ -98,7 +98,7 @@ class VecDB:
 
 
 if __name__ == "__main__":
-    db_size = 1_000_000
+    db_size = 10_000_000
     db_file_path = f"Databases"
     db_file_name = f"DB_{db_size}.dat"
     index_file_path = f"DBIndexes"
@@ -135,3 +135,5 @@ if __name__ == "__main__":
     print(f"Time taken to search for the nearest neighbors: {end_time - start_time:.4f} seconds")
     print(f"Memory usage: {memory_usage[1]:.4f} MB")
     print(f"Average Time taken to search for the nearest neighbors: {(end_time - start_time)/nq} seconds")
+
+
