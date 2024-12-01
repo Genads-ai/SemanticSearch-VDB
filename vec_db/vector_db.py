@@ -3,6 +3,8 @@ import numpy as np
 import os
 import Indexes.ivf_adc_index as ivf_adc_index
 import Indexes.flat_index as flat_index
+import Indexes.ivf_index as ivf_index
+import Indexes.imi_index as imi_index
 from utilities import compute_recall_at_k,measure_memory_usage
 import faiss
 import timeit
@@ -10,7 +12,7 @@ import timeit
 DB_SEED_NUMBER = 42
 ELEMENT_SIZE = np.dtype(np.float32).itemsize
 DIMENSION = 70
-N_PROBE = 15
+N_PROBE = 8
 
 class VecDB:
     def __init__(self, database_file_path = "Databases/DB_1000000.dat", index_file_path = "index.dat", new_db = True, db_size = None) -> None:
@@ -26,13 +28,13 @@ class VecDB:
                 os.remove(self.db_path)
             self.generate_database(db_size)
         else:
-            self.index = self._build_index(ivf_adc_index.IVFADCIndex(vectors=self.get_all_rows(),nlist=256,dimension=70))
+            self.index = self._build_index(imi_index.IMIIndex(vectors=self.get_all_rows(),nlist=256,dimension=70))
     
     def generate_database(self, size: int) -> None:
         rng = np.random.default_rng(DB_SEED_NUMBER)
         vectors = rng.random((size, DIMENSION), dtype=np.float32)
         self._write_vectors_to_file(vectors)
-        self.index = self._build_index(ivf_adc_index.IVFADCIndex(vectors=self.get_all_rows(),nlist=256,dimension=70))
+        self.index = self._build_index(imi_index.IMIIndex(vectors=self.get_all_rows(),nlist=256,dimension=70))
 
     def _write_vectors_to_file(self, vectors: np.ndarray) -> None:
         mmap_vectors = np.memmap(self.db_path, dtype=np.float32, mode='w+', shape=vectors.shape)
@@ -60,6 +62,25 @@ class VecDB:
             return np.array(mmap_vector[0])
         except Exception as e:
             return f"An error occurred: {e}"
+        
+    def get_batch_rows(self, row_indices: List[int]) -> np.ndarray:
+        try:
+            vectors = np.zeros((len(row_indices), DIMENSION), dtype=np.float32)
+            for i, row_num in enumerate(row_indices):
+                offset = np.int64(row_num) * np.int64(DIMENSION) * np.int64(ELEMENT_SIZE)
+
+                # Validate offset
+                if offset < 0 or offset >= os.path.getsize(self.db_path):
+                    raise ValueError(f"Invalid offset calculated: {offset} for row {row_num}")
+
+                # Access memory-mapped vector
+                mmap_vector = np.memmap(self.db_path, dtype=np.float32, mode='r', shape=(1, DIMENSION), offset=offset)
+                vectors[i] = mmap_vector[0]
+
+            return vectors
+        except Exception as e:
+            print(f"An error occurred while fetching batch rows: {e}")
+            return np.array([])
 
     def get_all_rows(self) -> np.ndarray:
         # Take care this load all the data in memory
@@ -82,7 +103,7 @@ class VecDB:
     # Define the retrieval function which uses the index to retrieve the nearest neighbors
     def retrieve(self, query: np.ndarray, top_k: int) -> List[int]:
         # Search for the nearest neighbors
-        D, I = self.index.search(query, top_k, nprobe=N_PROBE)
+        D, I = self.index.search(self,query, top_k, nprobe=N_PROBE)
         return I[0].tolist()
     
     def _cal_score(self, vec1, vec2):
@@ -98,7 +119,7 @@ class VecDB:
 
 
 if __name__ == "__main__":
-    db_size = 1_000_000
+    db_size = 10_000_000
     db_file_path = f"Databases"
     db_file_name = f"DB_{db_size}.dat"
     index_file_path = f"DBIndexes"
