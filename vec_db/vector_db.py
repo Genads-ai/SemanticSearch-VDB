@@ -104,7 +104,7 @@ class VecDB:
     def retrieve(self, query: np.ndarray, top_k: int) -> List[int]:
         # Search for the nearest neighbors
         D, I = self.index.search(self,query, top_k, nprobe=N_PROBE)
-        return I[0].tolist()
+        return I.tolist()
     
     def _cal_score(self, vec1, vec2):
         dot_product = np.dot(vec1, vec2)

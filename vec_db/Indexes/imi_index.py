@@ -14,6 +14,7 @@ from Quantizers.product_quantizer import ProductQuantizer
 import heapq
 import pickle
 from joblib import Parallel, delayed
+from concurrent.futures import ThreadPoolExecutor
 
 class IMIIndex(IndexingStrategy):
     def __init__(self, vectors, nlist, dimension=70):
@@ -77,56 +78,44 @@ class IMIIndex(IndexingStrategy):
         # Find closest centroids in both subspaces
         cluster_distances1 = cdist(subspace1, self.centroids1, metric="cosine")
         cluster_distances2 = cdist(subspace2, self.centroids2, metric="cosine")
-        closest_clusters1 = np.argsort(cluster_distances1, axis=1)[:, :nprobe]
-        closest_clusters2 = np.argsort(cluster_distances2, axis=1)[:, :nprobe]
-        def process_query(q_idx, query_vector):
-            # Combine cluster pairs
-            clusters1 = closest_clusters1[q_idx]
-            clusters2 = closest_clusters2[q_idx]
-            cluster_pairs = [(c1, c2) for c1 in clusters1 for c2 in clusters2]
+        closest_clusters1 = np.argsort(cluster_distances1, axis=1)[:, :nprobe].flatten()
+        closest_clusters2 = np.argsort(cluster_distances2, axis=1)[:, :nprobe].flatten()
 
-            # Get indices for all cluster pairs
-            cluster_indices = []
-            for c1, c2 in cluster_pairs:
-                cluster_indices.extend(self.index_inverted_lists[(c1, c2)])
-            unique_indices = np.unique(cluster_indices)
+        # Combine cluster pairs
+        cluster_pairs = [(c1, c2) for c1 in closest_clusters1 for c2 in closest_clusters2]
 
-            # Function to process a batch
-            def process_batch(start, end):
-                batch_indices = unique_indices[start:end]
-                batch_indices = np.sort(batch_indices)
-                batch_vectors = db.get_batch_rows(batch_indices)
-                batch_distances = cdist(query_vector, batch_vectors, metric="cosine").squeeze()
-                return batch_distances, batch_indices
+        # Get indices for all cluster pairs
+        cluster_indices = []
+        for c1, c2 in cluster_pairs:
+            cluster_indices.extend(self.index_inverted_lists[(c1, c2)])
+        unique_indices = np.unique(cluster_indices)
 
-            # Parallel batch processing
-            num_candidates = len(unique_indices)
-            batch_ranges = [(start, min(start + batch_size, num_candidates))
-                            for start in range(0, num_candidates, batch_size)]
+        # Function to process a batch
+        def process_batch(start, end):
+            batch_indices = unique_indices[start:end]
+            batch_indices = np.sort(batch_indices)
+            batch_vectors = db.get_batch_rows(batch_indices)
+            batch_distances = cdist(query, batch_vectors, metric="cosine").squeeze()
+            return batch_distances, batch_indices
 
-            results = Parallel(n_jobs=n_jobs)(
-                delayed(process_batch)(start, end) for start, end in batch_ranges
-            )
+        # Parallel batch processing
+        num_candidates = len(unique_indices)
+        batch_ranges = [(start, min(start + batch_size, num_candidates))
+                        for start in range(0, num_candidates, batch_size)]
 
-            all_distances = np.concatenate([res[0] for res in results])
-            all_indices = np.concatenate([res[1] for res in results])
-
-            # Find the top-k smallest distances
-            top_k_indices = np.argsort(all_distances)[:k]
-            top_k_distances = all_distances[top_k_indices]
-            top_k_original_indices = all_indices[top_k_indices]
-
-            return top_k_distances, top_k_original_indices
-
-        # Parallelize over queries
         results = Parallel(n_jobs=n_jobs)(
-            delayed(process_query)(q_idx, query[q_idx].reshape(1, -1))
-            for q_idx in range(query.shape[0])
+            delayed(process_batch)(start, end) for start, end in batch_ranges
         )
 
-        # Combine results
-        all_distances, all_indices = zip(*results)
-        return np.array(all_distances), np.array(all_indices)
+        all_distances = np.concatenate([res[0] for res in results])
+        all_indices = np.concatenate([res[1] for res in results])
+
+        # Find the top-k smallest distances
+        top_k_indices = np.argsort(all_distances)[:k]
+        top_k_distances = all_distances[top_k_indices]
+        top_k_original_indices = all_indices[top_k_indices]
+
+        return np.array(top_k_distances), np.array(top_k_original_indices)
 
     def build_index(self):
         nq = self.vectors.shape[0]
