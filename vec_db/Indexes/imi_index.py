@@ -66,7 +66,7 @@ class IMIIndex(IndexingStrategy):
 
         print("Assignment complete!")
 
-    def search(self, db, query, k=5, nprobe=1, batch_size=100000, n_jobs=-1):
+    def search(self, db, query, k=5, nprobe=1, batch_size=20000, n_jobs=-1):
         if query.ndim == 1:
             query = query.reshape(1, -1)
 
@@ -79,7 +79,6 @@ class IMIIndex(IndexingStrategy):
         cluster_distances2 = cdist(subspace2, self.centroids2, metric="cosine")
         closest_clusters1 = np.argsort(cluster_distances1, axis=1)[:, :nprobe]
         closest_clusters2 = np.argsort(cluster_distances2, axis=1)[:, :nprobe]
-
         def process_query(q_idx, query_vector):
             # Combine cluster pairs
             clusters1 = closest_clusters1[q_idx]
@@ -92,25 +91,25 @@ class IMIIndex(IndexingStrategy):
                 cluster_indices.extend(self.index_inverted_lists[(c1, c2)])
             unique_indices = np.unique(cluster_indices)
 
-            # Fetch vectors in batches
-            num_candidates = len(unique_indices)
-            all_distances = []
-            all_indices = []
-
-            for start in range(0, num_candidates, batch_size):
-                end = min(start + batch_size, num_candidates)
+            # Function to process a batch
+            def process_batch(start, end):
                 batch_indices = unique_indices[start:end]
-
-                # Batch fetch vectors
+                batch_indices = np.sort(batch_indices)
                 batch_vectors = db.get_batch_rows(batch_indices)
                 batch_distances = cdist(query_vector, batch_vectors, metric="cosine").squeeze()
+                return batch_distances, batch_indices
 
-                # Keep track of distances and indices
-                all_distances.extend(batch_distances)
-                all_indices.extend(batch_indices)
+            # Parallel batch processing
+            num_candidates = len(unique_indices)
+            batch_ranges = [(start, min(start + batch_size, num_candidates))
+                            for start in range(0, num_candidates, batch_size)]
 
-            all_distances = np.array(all_distances)
-            all_indices = np.array(all_indices)
+            results = Parallel(n_jobs=n_jobs)(
+                delayed(process_batch)(start, end) for start, end in batch_ranges
+            )
+
+            all_distances = np.concatenate([res[0] for res in results])
+            all_indices = np.concatenate([res[1] for res in results])
 
             # Find the top-k smallest distances
             top_k_indices = np.argsort(all_distances)[:k]
