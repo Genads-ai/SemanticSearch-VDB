@@ -6,13 +6,12 @@ import Indexes.flat_index as flat_index
 import Indexes.ivf_index as ivf_index
 import Indexes.imi_index as imi_index
 from utilities import compute_recall_at_k,measure_memory_usage
-import faiss
 import timeit
 
 DB_SEED_NUMBER = 42
 ELEMENT_SIZE = np.dtype(np.float32).itemsize
 DIMENSION = 70
-N_PROBE = 8
+N_PROBE = 36
 
 class VecDB:
     def __init__(self, database_file_path = "Databases/DB_1000000.dat", index_file_path = "index.dat", new_db = True, db_size = None) -> None:
@@ -62,25 +61,39 @@ class VecDB:
             return np.array(mmap_vector[0])
         except Exception as e:
             return f"An error occurred: {e}"
-        
-    def get_batch_rows(self, row_indices: List[int]) -> np.ndarray:
+   
+   
+    def get_sequential_block(self, left_index: int, right_index: int) -> np.ndarray:
         try:
-            vectors = np.zeros((len(row_indices), DIMENSION), dtype=np.float32)
-            for i, row_num in enumerate(row_indices):
-                offset = np.int64(row_num) * np.int64(DIMENSION) * np.int64(ELEMENT_SIZE)
+            # Validate indices
+            if left_index < 0 or right_index <= left_index:
+                raise ValueError("Invalid range: left_index must be >= 0 and right_index must be > left_index.")
 
-                # Validate offset
-                if offset < 0 or offset >= os.path.getsize(self.db_path):
-                    raise ValueError(f"Invalid offset calculated: {offset} for row {row_num}")
+            # Calculate total number of rows
+            total_rows = (os.path.getsize(self.db_path) // (DIMENSION * ELEMENT_SIZE))
 
-                # Access memory-mapped vector
-                mmap_vector = np.memmap(self.db_path, dtype=np.float32, mode='r', shape=(1, DIMENSION), offset=offset)
-                vectors[i] = mmap_vector[0]
+            if right_index > total_rows:
+                raise ValueError(f"Invalid range: right_index {right_index} exceeds total rows {total_rows}.")
 
-            return vectors
+            # Compute the byte offsets for the range
+            start_offset = np.int64(left_index) * np.int64(DIMENSION) * np.int64(ELEMENT_SIZE)
+            end_offset = np.int64(right_index) * np.int64(DIMENSION) * np.int64(ELEMENT_SIZE)
+
+            # Memory-map the file for the given range
+            mmap_data = np.memmap(
+                self.db_path,
+                dtype=np.float32,
+                mode='r',
+                offset=start_offset,
+                shape=(right_index - left_index, DIMENSION)
+            )
+
+            # Return the data as a regular numpy array (detach from memmap)
+            return np.array(mmap_data)
         except Exception as e:
-            print(f"An error occurred while fetching batch rows: {e}")
+            print(f"An error occurred while fetching the sequential block: {e}")
             return np.array([])
+
 
     def get_all_rows(self) -> np.ndarray:
         # Take care this load all the data in memory

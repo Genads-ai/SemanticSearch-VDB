@@ -90,25 +90,41 @@ class IMIIndex(IndexingStrategy):
             cluster_indices.extend(self.index_inverted_lists[(c1, c2)])
         unique_indices = np.unique(cluster_indices)
 
-        # Function to process a batch
-        def process_batch(start, end):
-            batch_indices = unique_indices[start:end]
-            batch_indices = np.sort(batch_indices)
-            batch_vectors = db.get_batch_rows(batch_indices)
-            batch_distances = cdist(query, batch_vectors, metric="cosine").squeeze()
-            return batch_distances, batch_indices
+        # Function to process a batch with sequential block read
+        def process_batch(batch_indices):
+            if len(batch_indices) == 0:
+                return np.array([]), np.array([])
 
-        # Parallel batch processing
+            # Find the smallest and largest indices in the batch
+            left_index = np.min(batch_indices)
+            right_index = np.max(batch_indices) + 1  # Exclusive
+
+            # Read the sequential block
+            sequential_block = db.get_sequential_block(left_index, right_index)
+
+            # Filter the vectors to include only those matching batch_indices
+            valid_indices_mask = np.isin(np.arange(left_index, right_index), batch_indices)
+            filtered_vectors = sequential_block[valid_indices_mask]
+            filtered_indices = np.arange(left_index, right_index)[valid_indices_mask]
+
+            # Compute distances
+            batch_distances = cdist(query, filtered_vectors, metric="cosine").squeeze()
+            return batch_distances, filtered_indices
+
+        # Prepare batch ranges
         num_candidates = len(unique_indices)
         batch_ranges = [(start, min(start + batch_size, num_candidates))
                         for start in range(0, num_candidates, batch_size)]
 
-        results = Parallel(n_jobs=n_jobs)(
-            delayed(process_batch)(start, end) for start, end in batch_ranges
-        )
+        # Process each batch
+        results = []
+        for start, end in batch_ranges:
+            batch_indices = unique_indices[start:end]
+            results.append(process_batch(batch_indices))
 
-        all_distances = np.concatenate([res[0] for res in results])
-        all_indices = np.concatenate([res[1] for res in results])
+        # Collect and merge results
+        all_distances = np.concatenate([res[0] for res in results if len(res[0]) > 0])
+        all_indices = np.concatenate([res[1] for res in results if len(res[1]) > 0])
 
         # Find the top-k smallest distances
         top_k_indices = np.argsort(all_distances)[:k]
