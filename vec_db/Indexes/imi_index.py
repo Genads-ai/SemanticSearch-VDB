@@ -7,6 +7,7 @@ from scipy.spatial.distance import cdist
 import memory_profiler
 import timeit
 import tempfile
+import itertools
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utilities import compute_recall_at_k
@@ -52,90 +53,95 @@ class IMIIndex(IndexingStrategy):
 
     def add(self):
         print("Assigning vectors to clusters...")
-
         # Split vectors into two subspaces
+        num_vectors = self.vectors.shape[0]
+        batch_size = 500_000
         subspace1 = self.vectors[:, :self.subspace_dim]
         subspace2 = self.vectors[:, self.subspace_dim:]
 
-        # Compute assignments for both subspaces
-        assignments1 = np.argmin(cdist(subspace1, self.centroids1, metric="cosine"), axis=1)
-        assignments2 = np.argmin(cdist(subspace2, self.centroids2, metric="cosine"), axis=1)
+        for start_idx in range(0, num_vectors, batch_size):
+            end_idx = min(start_idx + batch_size, num_vectors)
 
-        # Create multi-index assignments
-        for i, (a1, a2) in enumerate(zip(assignments1, assignments2)):
-            self.index_inverted_lists[(a1, a2)].append(i)
+            # Process current batch
+            batch_subspace1 = subspace1[start_idx:end_idx]
+            batch_subspace2 = subspace2[start_idx:end_idx]
+
+            # Compute assignments for the batch
+            assignments1 = np.argmin(cdist(batch_subspace1, self.centroids1, metric="cosine"), axis=1)
+            assignments2 = np.argmin(cdist(batch_subspace2, self.centroids2, metric="cosine"), axis=1)
+
+            # Create multi-index assignments for the batch
+            for i, (a1, a2) in enumerate(zip(assignments1, assignments2), start=start_idx):
+                self.index_inverted_lists[(a1, a2)].append(i)
+
 
         print("Assignment complete!")
-    def search(self, db, query, k=5, nprobe=1, batch_size=200):
-        if query.ndim == 1:
-            query = query.reshape(1, -1)
 
-        # Split query into two subspaces
-        subspace1 = query[:, :self.subspace_dim]
-        subspace2 = query[:, self.subspace_dim:]
+    def search(self, db, query_vector, top_k=5, nprobe=1, batch_size=5000):
+        if query_vector.ndim == 1:
+            query_vector = query_vector.reshape(1, -1)
+
+        # Split query vector into two subspaces
+        query_subspace1 = query_vector[:, :self.subspace_dim]
+        query_subspace2 = query_vector[:, self.subspace_dim:]
 
         # Find closest centroids in both subspaces
-        cluster_distances1 = cdist(subspace1, self.centroids1, metric="cosine")
-        cluster_distances2 = cdist(subspace2, self.centroids2, metric="cosine")
-        closest_clusters1 = np.argsort(cluster_distances1, axis=1)[:, :nprobe].flatten()
-        closest_clusters2 = np.argsort(cluster_distances2, axis=1)[:, :nprobe].flatten()
+        subspace1_distances = cdist(query_subspace1, self.centroids1, metric="cosine")
+        subspace2_distances = cdist(query_subspace2, self.centroids2, metric="cosine")
+        closest_clusters1 = np.argsort(subspace1_distances, axis=1)[:, :nprobe].flatten()
+        closest_clusters2 = np.argsort(subspace2_distances, axis=1)[:, :nprobe].flatten()
 
-        # Combine cluster pairs
-        cluster_pairs = [(c1, c2) for c1 in closest_clusters1 for c2 in closest_clusters2]
+        # Generate all possible centroid combinations to look through
+        cluster_pairs = np.array(
+            [(c1, c2) for c1 in closest_clusters1 for c2 in closest_clusters2]
+        )
 
-        # Get indices for all cluster pairs
-        cluster_indices = []
-        for c1, c2 in cluster_pairs:
-            cluster_indices.extend(self.index_inverted_lists[(c1, c2)])
-        unique_indices = np.unique(cluster_indices)
+        # Gather all vectors associated with the generated centroid pairs
+        candidate_vectors = np.concatenate(
+            [self.index_inverted_lists[tuple(pair)] for pair in cluster_pairs]
+        )
 
-        # Prepare batch ranges
-        num_candidates = len(unique_indices)
-        batch_ranges = [(start, min(start + batch_size, num_candidates))
-                        for start in range(0, num_candidates, batch_size)]
+        # Sorting for the sliding window
+        candidate_vectors.sort()
 
-        # Initialize results
-        all_distances = []
-        all_indices = []
+        left_pointer = 0
+        priority_queue = []
 
-        # Process each batch sequentially
-        for start, end in batch_ranges:
-            batch_indices = unique_indices[start:end]
+        # Sliding window to process vectors
+        # Here we select a window of indices such that the difference between the first and last index in the window is less than batch_size
+        while left_pointer < len(candidate_vectors):
+            right_pointer = np.searchsorted(candidate_vectors, candidate_vectors[left_pointer] + batch_size, side="left") - 1
+            block_data = db.get_sequential_block(candidate_vectors[left_pointer], candidate_vectors[right_pointer] + 1)
 
-            if len(batch_indices) == 0:
-                continue
+            # Filter relevant vectors within the block
+            relevant_indices = candidate_vectors[left_pointer:right_pointer + 1] - candidate_vectors[left_pointer]
+            block_data = block_data[relevant_indices]
 
-            # Find the smallest and largest indices in the batch
-            left_index = np.min(batch_indices)
-            right_index = np.max(batch_indices) + 1  # Exclusive
+            distances = cdist(query_vector, block_data, metric="cosine").flatten()
 
-            # Read the sequential block
-            sequential_block = db.get_sequential_block(left_index, right_index)
+            # Select top-k distances within the current window
+            if len(distances) > top_k:
+                top_indices = np.argpartition(distances, top_k)[:top_k]
+            else:
+                top_indices = np.argsort(distances)
 
-            # Filter the vectors to include only those matching batch_indices
-            valid_indices_mask = np.isin(np.arange(left_index, right_index), batch_indices)
-            filtered_vectors = sequential_block[valid_indices_mask]
-            filtered_indices = np.arange(left_index, right_index)[valid_indices_mask]
+            top_distances = distances[top_indices]
 
-            # Compute distances
-            batch_distances = cdist(query, filtered_vectors, metric="cosine").squeeze()
+            for dist, idx in zip(top_distances, top_indices):
+                if len(priority_queue) < top_k:
+                    heapq.heappush(priority_queue, (-dist, candidate_vectors[left_pointer + idx]))
+                else:
+                    heapq.heappushpop(priority_queue, (-dist, candidate_vectors[left_pointer + idx]))
 
-            # Append results
-            all_distances.append(batch_distances)
-            all_indices.append(filtered_indices)
+            left_pointer = right_pointer + 1
 
-        # Collect and merge results
-        all_distances = np.concatenate(all_distances)
-        all_indices = np.concatenate(all_indices)
+        priority_queue.sort(reverse=True)
+        top_k_distances = np.array([-item[0] for item in priority_queue])
+        top_k_indices = np.array([item[1] for item in priority_queue])
 
-        # Find the top-k smallest distances
-        top_k_indices = np.argsort(all_distances)[:k]
-        top_k_distances = all_distances[top_k_indices]
-        top_k_original_indices = all_indices[top_k_indices]
+        return top_k_distances, top_k_indices
 
-        return np.array(top_k_distances), np.array(top_k_original_indices)
-
-
+    
     def build_index(self):
         nq = self.vectors.shape[0]
         if os.path.exists(f"DBIndexes/imi_index_{nq}"):
