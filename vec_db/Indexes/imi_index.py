@@ -66,8 +66,8 @@ class IMIIndex(IndexingStrategy):
             self.index_inverted_lists[(a1, a2)].append(i)
 
         print("Assignment complete!")
-
-    def search(self, db, query, k=5, nprobe=1, batch_size=20000, n_jobs=-1):
+        
+    def search(self, db, query, k=5, nprobe=1, batch_size=20000):
         if query.ndim == 1:
             query = query.reshape(1, -1)
 
@@ -116,15 +116,19 @@ class IMIIndex(IndexingStrategy):
         batch_ranges = [(start, min(start + batch_size, num_candidates))
                         for start in range(0, num_candidates, batch_size)]
 
-        # Process each batch
-        results = []
+        # Process each batch sequentially
+        all_distances = []
+        all_indices = []
         for start, end in batch_ranges:
             batch_indices = unique_indices[start:end]
-            results.append(process_batch(batch_indices))
+            batch_distances, batch_indices = process_batch(batch_indices)
+            if len(batch_distances) > 0:
+                all_distances.append(batch_distances)
+                all_indices.append(batch_indices)
 
         # Collect and merge results
-        all_distances = np.concatenate([res[0] for res in results if len(res[0]) > 0])
-        all_indices = np.concatenate([res[1] for res in results if len(res[1]) > 0])
+        all_distances = np.concatenate(all_distances)
+        all_indices = np.concatenate(all_indices)
 
         # Find the top-k smallest distances
         top_k_indices = np.argsort(all_distances)[:k]
