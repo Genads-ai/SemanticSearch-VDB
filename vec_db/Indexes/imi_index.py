@@ -77,7 +77,7 @@ class IMIIndex(IndexingStrategy):
 
         print("Assignment complete!")
 
-    def search(self, db, query_vector, top_k=5, nprobe=1, batch_size=5000):
+    def search(self, db, query_vector, top_k=5, nprobe=1, batch_size=5000, num_threads=4):
         if query_vector.ndim == 1:
             query_vector = query_vector.reshape(1, -1)
 
@@ -104,43 +104,71 @@ class IMIIndex(IndexingStrategy):
         # Sorting for the sliding window
         candidate_vectors.sort()
 
-        left_pointer = 0
-        priority_queue = []
+        # Divide candidate vectors into chunks
+        total_vectors = len(candidate_vectors)
+        chunk_size = (total_vectors + num_threads - 1) // num_threads
+        chunks = [
+            candidate_vectors[i * chunk_size : (i + 1) * chunk_size]
+            for i in range(num_threads)
+        ]
 
-        # Sliding window to process vectors
-        # Here we select a window of indices such that the difference between the first and last index in the window is less than batch_size
-        while left_pointer < len(candidate_vectors):
-            right_pointer = np.searchsorted(candidate_vectors, candidate_vectors[left_pointer] + batch_size, side="left") - 1
-            block_data = db.get_sequential_block(candidate_vectors[left_pointer], candidate_vectors[right_pointer] + 1)
+        # Function for processing a single chunk
+        def process_chunk(chunk):
+            local_heap = []
+            left_pointer = 0
 
-            # Filter relevant vectors within the block
-            relevant_indices = candidate_vectors[left_pointer:right_pointer + 1] - candidate_vectors[left_pointer]
-            block_data = block_data[relevant_indices]
+            while left_pointer < len(chunk):
+                right_pointer = np.searchsorted(
+                    chunk, chunk[left_pointer] + batch_size, side="left"
+                ) - 1
+                block_data = db.get_sequential_block(
+                    chunk[left_pointer], chunk[right_pointer] + 1
+                )
 
-            distances = cdist(query_vector, block_data, metric="cosine").flatten()
+                # Filter relevant vectors within the block
+                relevant_indices = chunk[left_pointer:right_pointer + 1] - chunk[left_pointer]
+                block_data = block_data[relevant_indices]
 
-            # Select top-k distances within the current window
-            if len(distances) > top_k:
-                top_indices = np.argpartition(distances, top_k)[:top_k]
-            else:
-                top_indices = np.argsort(distances)
+                distances = cdist(query_vector, block_data, metric="cosine").flatten()
 
-            top_distances = distances[top_indices]
-
-            for dist, idx in zip(top_distances, top_indices):
-                if len(priority_queue) < top_k:
-                    heapq.heappush(priority_queue, (-dist, candidate_vectors[left_pointer + idx]))
+                # Select top-k distances within the current window
+                if len(distances) > top_k:
+                    top_indices = np.argpartition(distances, top_k)[:top_k]
                 else:
-                    heapq.heappushpop(priority_queue, (-dist, candidate_vectors[left_pointer + idx]))
+                    top_indices = np.argsort(distances)
 
-            left_pointer = right_pointer + 1
+                top_distances = distances[top_indices]
 
-        priority_queue.sort(reverse=True)
-        top_k_distances = np.array([-item[0] for item in priority_queue])
-        top_k_indices = np.array([item[1] for item in priority_queue])
+                for dist, idx in zip(top_distances, top_indices):
+                    if len(local_heap) < top_k:
+                        heapq.heappush(local_heap, (-dist, chunk[left_pointer + idx]))
+                    else:
+                        heapq.heappushpop(local_heap, (-dist, chunk[left_pointer + idx]))
+
+                left_pointer = right_pointer + 1
+
+            return local_heap
+
+        # Use ThreadPoolExecutor to process chunks in parallel
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [executor.submit(process_chunk, chunk) for chunk in chunks]
+
+        # Merge results from all threads
+        final_heap = []
+        for future in futures:
+            local_heap = future.result()
+            for item in local_heap:
+                if len(final_heap) < top_k:
+                    heapq.heappush(final_heap, item)
+                else:
+                    heapq.heappushpop(final_heap, item)
+
+        # Extract top-k results
+        final_heap.sort(reverse=True)
+        top_k_distances = np.array([-item[0] for item in final_heap[:top_k]])
+        top_k_indices = np.array([item[1] for item in final_heap[:top_k]])
 
         return top_k_distances, top_k_indices
-
     
     def build_index(self):
         nq = self.vectors.shape[0]
