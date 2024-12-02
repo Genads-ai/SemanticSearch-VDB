@@ -11,7 +11,7 @@ import timeit
 DB_SEED_NUMBER = 42
 ELEMENT_SIZE = np.dtype(np.float32).itemsize
 DIMENSION = 70
-N_PROBE = 36
+N_PROBE = 55
 
 class VecDB:
     def __init__(self, database_file_path = "Databases/DB_1000000.dat", index_file_path = "index.dat", new_db = True, db_size = None) -> None:

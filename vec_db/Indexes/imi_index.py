@@ -77,11 +77,10 @@ class IMIIndex(IndexingStrategy):
 
         print("Assignment complete!")
 
-    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=10000, batch_limit=1000):
+    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=4000, batch_limit=2000):
         def batch_numbers(numbers, max_difference, batch_limit):
             # Sort the numbers for easier batch formation
             sorted_numbers = sorted(numbers)
-            sorted_numbers = sorted_numbers[:100000]
             batches = []
             start_index = 0
 
@@ -128,17 +127,13 @@ class IMIIndex(IndexingStrategy):
             [self.index_inverted_lists[tuple(pair)] for pair in cluster_pairs]
         )
 
-        # Sorting for batch processing
-        print(f"Number of candidate vectors: {len(candidate_vectors)}")
-
         # Batch candidate vectors using batch_numbers
         batches = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
         # Initialize heap for top-k results
         local_heap = []
 
-        # Process each batch
-        for batch in batches:
+        def process_batch(batch):
             start_index = batch[0]
             end_index = batch[-1]
 
@@ -160,12 +155,19 @@ class IMIIndex(IndexingStrategy):
 
             top_distances = distances[top_indices]
 
-            # Update the heap with the top-k results from the current batch
-            for dist, idx in zip(top_distances, top_indices):
-                if len(local_heap) < top_k:
-                    heapq.heappush(local_heap, (-dist, batch[idx]))
-                else:
-                    heapq.heappushpop(local_heap, (-dist, batch[idx]))
+            # Return top distances and their corresponding indices
+            return [(dist, batch[idx]) for dist, idx in zip(top_distances, top_indices)]
+
+        # Use ThreadPoolExecutor to process batches in parallel
+        with ThreadPoolExecutor() as executor:
+            futures = [executor.submit(process_batch, batch) for batch in batches]
+            for future in futures:
+                results = future.result()
+                for dist, idx in results:
+                    if len(local_heap) < top_k:
+                        heapq.heappush(local_heap, (-dist, idx))
+                    else:
+                        heapq.heappushpop(local_heap, (-dist, idx))
 
         # Extract top-k results from the heap
         local_heap.sort(reverse=True)
@@ -198,11 +200,11 @@ class IMIIndex(IndexingStrategy):
         print("Index saved successfully!")
 
     def load_index(self, path: str):
-        print(f"Loading index from {path}")
+        # print(f"Loading index from {path}")
         with open(path, "rb") as f:
             data = pickle.load(f)
         self.centroids1 = data["centroids1"]
         self.centroids2 = data["centroids2"]
         self.index_inverted_lists = data["index_inverted_lists"]
-        print("Index loaded successfully!")
+        # print("Index loaded successfully!")
         return self
