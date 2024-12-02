@@ -66,8 +66,7 @@ class IMIIndex(IndexingStrategy):
             self.index_inverted_lists[(a1, a2)].append(i)
 
         print("Assignment complete!")
-        
-    def search(self, db, query, k=5, nprobe=1, batch_size=20000):
+    def search(self, db, query, k=5, nprobe=1, batch_size=200):
         if query.ndim == 1:
             query = query.reshape(1, -1)
 
@@ -90,10 +89,21 @@ class IMIIndex(IndexingStrategy):
             cluster_indices.extend(self.index_inverted_lists[(c1, c2)])
         unique_indices = np.unique(cluster_indices)
 
-        # Function to process a batch with sequential block read
-        def process_batch(batch_indices):
+        # Prepare batch ranges
+        num_candidates = len(unique_indices)
+        batch_ranges = [(start, min(start + batch_size, num_candidates))
+                        for start in range(0, num_candidates, batch_size)]
+
+        # Initialize results
+        all_distances = []
+        all_indices = []
+
+        # Process each batch sequentially
+        for start, end in batch_ranges:
+            batch_indices = unique_indices[start:end]
+
             if len(batch_indices) == 0:
-                return np.array([]), np.array([])
+                continue
 
             # Find the smallest and largest indices in the batch
             left_index = np.min(batch_indices)
@@ -109,22 +119,10 @@ class IMIIndex(IndexingStrategy):
 
             # Compute distances
             batch_distances = cdist(query, filtered_vectors, metric="cosine").squeeze()
-            return batch_distances, filtered_indices
 
-        # Prepare batch ranges
-        num_candidates = len(unique_indices)
-        batch_ranges = [(start, min(start + batch_size, num_candidates))
-                        for start in range(0, num_candidates, batch_size)]
-
-        # Process each batch sequentially
-        all_distances = []
-        all_indices = []
-        for start, end in batch_ranges:
-            batch_indices = unique_indices[start:end]
-            batch_distances, batch_indices = process_batch(batch_indices)
-            if len(batch_distances) > 0:
-                all_distances.append(batch_distances)
-                all_indices.append(batch_indices)
+            # Append results
+            all_distances.append(batch_distances)
+            all_indices.append(filtered_indices)
 
         # Collect and merge results
         all_distances = np.concatenate(all_distances)
@@ -136,6 +134,7 @@ class IMIIndex(IndexingStrategy):
         top_k_original_indices = all_indices[top_k_indices]
 
         return np.array(top_k_distances), np.array(top_k_original_indices)
+
 
     def build_index(self):
         nq = self.vectors.shape[0]
