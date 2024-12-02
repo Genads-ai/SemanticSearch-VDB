@@ -77,7 +77,7 @@ class IMIIndex(IndexingStrategy):
 
         print("Assignment complete!")
 
-    def search(self, db, query_vector, top_k=5, nprobe=1, batch_size=5000, num_threads=os.cpu_count() or 1):
+    def search(self, db, query_vector, top_k=5, nprobe=1, batch_size=5000, num_threads=12):
         if query_vector.ndim == 1:
             query_vector = query_vector.reshape(1, -1)
 
