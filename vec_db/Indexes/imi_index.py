@@ -76,11 +76,12 @@ class IMIIndex(IndexingStrategy):
 
 
         print("Assignment complete!")
-        
+
     def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=10000, batch_limit=1000):
         def batch_numbers(numbers, max_difference, batch_limit):
             # Sort the numbers for easier batch formation
             sorted_numbers = sorted(numbers)
+            sorted_numbers = sorted_numbers[:100000]
             batches = []
             start_index = 0
 
@@ -127,7 +128,6 @@ class IMIIndex(IndexingStrategy):
             [self.index_inverted_lists[tuple(pair)] for pair in cluster_pairs]
         )
 
-        candidate_vectors = candidate_vectors[:70000]
         # Sorting for batch processing
         print(f"Number of candidate vectors: {len(candidate_vectors)}")
 
