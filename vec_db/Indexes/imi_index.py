@@ -77,7 +77,33 @@ class IMIIndex(IndexingStrategy):
 
         print("Assignment complete!")
         
-    def search(self, db, query_vector, top_k=5, nprobe=1, batch_size=4000):
+    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=10000, batch_limit=1000):
+        def batch_numbers(numbers, max_difference, batch_limit):
+            # Sort the numbers for easier batch formation
+            sorted_numbers = sorted(numbers)
+            batches = []
+            start_index = 0
+
+            while start_index < len(sorted_numbers) and len(batches) < batch_limit:
+                batch = []
+                min_element = sorted_numbers[start_index]
+
+                for i in range(start_index, len(sorted_numbers)):
+                    if sorted_numbers[i] - min_element <= max_difference:
+                        batch.append(sorted_numbers[i])
+                    else:
+                        break
+
+                if batch:
+                    start_index += len(batch)
+                    batches.append(batch)
+                else:
+                    # If a single number cannot fit in any batch, add it alone
+                    batches.append([sorted_numbers[start_index]])
+                    start_index += 1
+
+            return batches
+
         if query_vector.ndim == 1:
             query_vector = query_vector.reshape(1, -1)
 
@@ -101,29 +127,32 @@ class IMIIndex(IndexingStrategy):
             [self.index_inverted_lists[tuple(pair)] for pair in cluster_pairs]
         )
 
-        # Sorting for the sliding window
-        candidate_vectors.sort()
+        candidate_vectors = candidate_vectors[:70000]
+        # Sorting for batch processing
+        print(f"Number of candidate vectors: {len(candidate_vectors)}")
+
+        # Batch candidate vectors using batch_numbers
+        batches = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
         # Initialize heap for top-k results
         local_heap = []
-        left_pointer = 0
 
-        # Process candidate vectors using a sliding window
-        while left_pointer < len(candidate_vectors):
-            right_pointer = np.searchsorted(
-                candidate_vectors, candidate_vectors[left_pointer] + batch_size, side="left"
-            ) - 1
-            block_data = db.get_sequential_block(
-                candidate_vectors[left_pointer], candidate_vectors[right_pointer] + 1
-            )
+        # Process each batch
+        for batch in batches:
+            start_index = batch[0]
+            end_index = batch[-1]
+
+            # Retrieve block data for the current batch
+            block_data = db.get_sequential_block(start_index, end_index + 1)
 
             # Filter relevant vectors within the block
-            relevant_indices = candidate_vectors[left_pointer:right_pointer + 1] - candidate_vectors[left_pointer]
+            relevant_indices = np.array(batch) - start_index
             block_data = block_data[relevant_indices]
 
+            # Compute distances for the current batch
             distances = cdist(query_vector, block_data, metric="cosine").flatten()
 
-            # Select top-k distances within the current window
+            # Select top-k distances within the current batch
             if len(distances) > top_k:
                 top_indices = np.argpartition(distances, top_k)[:top_k]
             else:
@@ -131,13 +160,12 @@ class IMIIndex(IndexingStrategy):
 
             top_distances = distances[top_indices]
 
+            # Update the heap with the top-k results from the current batch
             for dist, idx in zip(top_distances, top_indices):
                 if len(local_heap) < top_k:
-                    heapq.heappush(local_heap, (-dist, candidate_vectors[left_pointer + idx]))
+                    heapq.heappush(local_heap, (-dist, batch[idx]))
                 else:
-                    heapq.heappushpop(local_heap, (-dist, candidate_vectors[left_pointer + idx]))
-
-            left_pointer = right_pointer + 1
+                    heapq.heappushpop(local_heap, (-dist, batch[idx]))
 
         # Extract top-k results from the heap
         local_heap.sort(reverse=True)
@@ -145,6 +173,7 @@ class IMIIndex(IndexingStrategy):
         top_k_indices = np.array([item[1] for item in local_heap[:top_k]])
 
         return top_k_distances, top_k_indices
+
     
     def build_index(self):
         nq = self.vectors.shape[0]
