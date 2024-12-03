@@ -15,7 +15,7 @@ from Quantizers.product_quantizer import ProductQuantizer
 import heapq
 import pickle
 from joblib import Parallel, delayed
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class IMIIndex(IndexingStrategy):
     def __init__(self, vectors, nlist, dimension=70):
@@ -77,32 +77,47 @@ class IMIIndex(IndexingStrategy):
 
         print("Assignment complete!")
 
-    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=4000, batch_limit=2000):
+        
+    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=5000, batch_limit=2000):
         def batch_numbers(numbers, max_difference, batch_limit):
             # Sort the numbers for easier batch formation
-            sorted_numbers = sorted(numbers)
-            batches = []
+            numbers.sort()
             start_index = 0
+            batch_count = 0
 
-            while start_index < len(sorted_numbers) and len(batches) < batch_limit:
-                batch = []
-                min_element = sorted_numbers[start_index]
+            while start_index < len(numbers) and batch_count < batch_limit:
+                min_element = numbers[start_index]
+                end_index = start_index
 
-                for i in range(start_index, len(sorted_numbers)):
-                    if sorted_numbers[i] - min_element <= max_difference:
-                        batch.append(sorted_numbers[i])
-                    else:
-                        break
+                # Find the end of the current batch range
+                while end_index < len(numbers) and numbers[end_index] - min_element <= max_difference:
+                    end_index += 1
 
-                if batch:
-                    start_index += len(batch)
-                    batches.append(batch)
-                else:
-                    # If a single number cannot fit in any batch, add it alone
-                    batches.append([sorted_numbers[start_index]])
-                    start_index += 1
+                # Yield the current batch
+                yield numbers[start_index:end_index]
+                batch_count += 1
 
-            return batches
+                # Move the start index forward
+                start_index = end_index
+
+        def process_batch(batch):
+            """Function to process a single batch and return local top-k results."""
+            start_index = batch[0]
+            end_index = batch[-1]
+
+            # Retrieve block data for the current batch
+            block_data = db.get_sequential_block(start_index, end_index + 1)
+
+            # Filter relevant vectors within the block
+            relevant_indices = np.array(batch) - start_index
+            block_data = block_data[relevant_indices]
+
+            # Compute distances for the current batch
+            distances = cdist(query_vector, block_data, metric="cosine").flatten()
+
+            # Select top-k distances within the current batch
+            top_indices = np.argsort(distances)[:top_k]
+            return [(distances[idx], batch[idx]) for idx in top_indices]
 
         if query_vector.ndim == 1:
             query_vector = query_vector.reshape(1, -1)
@@ -127,54 +142,32 @@ class IMIIndex(IndexingStrategy):
             [self.index_inverted_lists[tuple(pair)] for pair in cluster_pairs]
         )
 
-        # Batch candidate vectors using batch_numbers
-        batches = batch_numbers(candidate_vectors, max_difference, batch_limit)
+        # Use generator to batch candidate vectors
+        batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
-        # Initialize heap for top-k results
+        # Initialize heap for global top-k results
         local_heap = []
-
-        def process_batch(batch):
-            start_index = batch[0]
-            end_index = batch[-1]
-
-            # Retrieve block data for the current batch
-            block_data = db.get_sequential_block(start_index, end_index + 1)
-
-            # Filter relevant vectors within the block
-            relevant_indices = np.array(batch) - start_index
-            block_data = block_data[relevant_indices]
-
-            # Compute distances for the current batch
-            distances = cdist(query_vector, block_data, metric="cosine").flatten()
-
-            # Select top-k distances within the current batch
-            if len(distances) > top_k:
-                top_indices = np.argpartition(distances, top_k)[:top_k]
-            else:
-                top_indices = np.argsort(distances)
-
-            top_distances = distances[top_indices]
-
-            # Return top distances and their corresponding indices
-            return [(dist, batch[idx]) for dist, idx in zip(top_distances, top_indices)]
 
         # Use ThreadPoolExecutor to process batches in parallel
         with ThreadPoolExecutor() as executor:
-            futures = [executor.submit(process_batch, batch) for batch in batches]
-            for future in futures:
-                results = future.result()
-                for dist, idx in results:
+            future_to_batch = {executor.submit(process_batch, batch): batch for batch in batch_generator}
+
+            for future in as_completed(future_to_batch):
+                batch_top_k = future.result()
+
+                # Update the global heap with results from this batch
+                for dist, idx in batch_top_k:
                     if len(local_heap) < top_k:
                         heapq.heappush(local_heap, (-dist, idx))
                     else:
                         heapq.heappushpop(local_heap, (-dist, idx))
 
-        # Extract top-k results from the heap
-        local_heap.sort(reverse=True)
-        top_k_distances = np.array([-item[0] for item in local_heap[:top_k]])
-        top_k_indices = np.array([item[1] for item in local_heap[:top_k]])
+        # Extract global top-k results
+        top_k_distances = np.array([-item[0] for item in local_heap])
+        top_k_indices = np.array([item[1] for item in local_heap])
 
         return top_k_distances, top_k_indices
+      
 
     
     def build_index(self):
