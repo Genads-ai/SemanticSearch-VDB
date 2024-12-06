@@ -77,7 +77,7 @@ class IMIIndex(IndexingStrategy):
 
         print("Assignment complete!")
 
-        
+
     def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=5000, batch_limit=2000):
         def batch_numbers(numbers, max_difference, batch_limit):
             # Sort the numbers for easier batch formation
@@ -89,7 +89,6 @@ class IMIIndex(IndexingStrategy):
                 min_element = numbers[start_index]
                 end_index = start_index
 
-                # Find the end of the current batch range
                 while end_index < len(numbers) and numbers[end_index] - min_element <= max_difference:
                     end_index += 1
 
@@ -97,7 +96,6 @@ class IMIIndex(IndexingStrategy):
                 yield numbers[start_index:end_index]
                 batch_count += 1
 
-                # Move the start index forward
                 start_index = end_index
 
         def process_batch(batch):
@@ -105,17 +103,13 @@ class IMIIndex(IndexingStrategy):
             start_index = batch[0]
             end_index = batch[-1]
 
-            # Retrieve block data for the current batch
             block_data = db.get_sequential_block(start_index, end_index + 1)
 
-            # Filter relevant vectors within the block
             relevant_indices = np.array(batch) - start_index
             block_data = block_data[relevant_indices]
 
-            # Compute distances for the current batch
             distances = cdist(query_vector, block_data, metric="cosine").flatten()
 
-            # Select top-k distances within the current batch
             top_indices = np.argsort(distances)[:top_k]
             return [(distances[idx], batch[idx]) for idx in top_indices]
 
@@ -132,44 +126,36 @@ class IMIIndex(IndexingStrategy):
         closest_clusters1 = np.argsort(subspace1_distances, axis=1)[:, :nprobe].flatten()
         closest_clusters2 = np.argsort(subspace2_distances, axis=1)[:, :nprobe].flatten()
 
-        # Generate all possible centroid combinations to look through
         cluster_pairs = np.array(
             [(c1, c2) for c1 in closest_clusters1 for c2 in closest_clusters2]
         )
 
-        # Gather all vectors associated with the generated centroid pairs
         candidate_vectors = np.concatenate(
             [self.index_inverted_lists[tuple(pair)] for pair in cluster_pairs]
         )
 
-        # Use generator to batch candidate vectors
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
-        # Initialize heap for global top-k results
         local_heap = []
 
-        # Use ThreadPoolExecutor to process batches in parallel
-        with ThreadPoolExecutor() as executor:
+        with ThreadPoolExecutor(max_workers=2) as executor:
             future_to_batch = {executor.submit(process_batch, batch): batch for batch in batch_generator}
 
             for future in as_completed(future_to_batch):
                 batch_top_k = future.result()
 
-                # Update the global heap with results from this batch
                 for dist, idx in batch_top_k:
                     if len(local_heap) < top_k:
                         heapq.heappush(local_heap, (-dist, idx))
                     else:
                         heapq.heappushpop(local_heap, (-dist, idx))
 
-        # Extract global top-k results
         top_k_distances = np.array([-item[0] for item in local_heap])
         top_k_indices = np.array([item[1] for item in local_heap])
 
         return top_k_distances, top_k_indices
       
-
-    
+      
     def build_index(self):
         nq = self.vectors.shape[0]
         if os.path.exists(f"DBIndexes/imi_index_{nq}"):
