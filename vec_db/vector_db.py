@@ -19,7 +19,7 @@ class VecDB:
         self.db_path = database_file_path
         self.index_path = index_file_path
         self.index = None
-        self.mmap_data = None
+        self.file_handle = open(self.db_path, 'r+b') if not new_db else None
         if new_db:
             if db_size is None:
                 raise ValueError("You need to provide the size of the database")
@@ -28,7 +28,8 @@ class VecDB:
                 os.remove(self.db_path)
             self.generate_database(db_size)
         else:
-            self.mmap_data = np.memmap(self.db_path, dtype=np.float32, mode='r', shape=(self._get_num_records(), DIMENSION))
+            if self.file_handle is None:
+                self.file_handle = open(self.db_path, 'r+b')
             if "ivf" in self.index_path:
                 self.index = self._build_index(ivf_adc_index.IVFADCIndex(vectors=self.get_all_rows(),nlist=256,dimension=70))
             else:
@@ -69,29 +70,36 @@ class VecDB:
         except Exception as e:
             return f"An error occurred: {e}"
    
-   
+
     def get_sequential_block(self, left_index: int, right_index: int) -> np.ndarray:
         try:
-            # Validate indices
             if left_index < 0 or right_index <= left_index:
                 raise ValueError("Invalid range: left_index must be >= 0 and right_index must be > left_index.")
 
-            # Calculate total number of rows
-            total_rows = (os.path.getsize(self.db_path) // (DIMENSION * ELEMENT_SIZE))
+            total_rows = self._get_num_records()
 
             if right_index > total_rows:
                 raise ValueError(f"Invalid range: right_index {right_index} exceeds total rows {total_rows}.")
 
-            # Compute the byte offsets for the range
-            # start_offset = np.int64(left_index) * np.int64(DIMENSION) * np.int64(ELEMENT_SIZE)
+            num_vectors = np.int64(right_index) - np.int64(left_index)
+            byte_offset = np.int64(left_index) * np.int64(DIMENSION) * np.int64(ELEMENT_SIZE)
+            byte_size = np.int64(num_vectors) * np.int64(DIMENSION) * np.int64(ELEMENT_SIZE)
 
-            # Memory-map the file for the given range
-            return self.mmap_data[left_index:right_index]
+            # Seek to the start offset
+            self.file_handle.seek(byte_offset)
 
+            # Read the required bytes
+            bytes_read = self.file_handle.read(byte_size)
+            if len(bytes_read) != byte_size:
+                raise IOError(f"Failed to read the complete block from {left_index} to {right_index}.")
+
+            # Convert bytes to NumPy array
+            block = np.frombuffer(bytes_read, dtype=np.float32).reshape((num_vectors, DIMENSION))
+
+            return block
         except Exception as e:
             print(f"An error occurred while fetching the sequential block: {e}")
             return np.array([])
-
 
     def get_all_rows(self) -> np.ndarray:
         # Take care this load all the data in memory
