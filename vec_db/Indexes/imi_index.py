@@ -8,7 +8,6 @@ import memory_profiler
 import timeit
 import tempfile
 import itertools
-import gc
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utilities import compute_recall_at_k
@@ -87,6 +86,7 @@ class IMIIndex(IndexingStrategy):
             while start_index < len(numbers) and batch_count < batch_limit:
                 min_element = numbers[start_index]
                 end_index = start_index
+
                 while end_index < len(numbers) and numbers[end_index] - min_element <= max_difference:
                     end_index += 1
 
@@ -105,9 +105,9 @@ class IMIIndex(IndexingStrategy):
             # Compute cosine distances
             distances = cdist(query_vector, block_data, metric="cosine").flatten()
 
+            # Check if there are more than top_k elements in the heap
             if len(distances) <= top_k:
                 return list(zip(distances, batch))
-
             top_indices = np.argpartition(distances, top_k)[:top_k]
             top_indices = top_indices[np.argsort(distances[top_indices])]
             return [(distances[idx], batch[idx]) for idx in top_indices]
@@ -115,59 +115,50 @@ class IMIIndex(IndexingStrategy):
         if query_vector.ndim == 1:
             query_vector = query_vector.reshape(1, -1)
 
-        # Split query vector
+        # Split query vector into two subspaces
         query_subspace1 = query_vector[:, :self.subspace_dim]
         query_subspace2 = query_vector[:, self.subspace_dim:]
 
-        # Compute distances to centroids and find closest clusters
+        # Find closest centroids in both subspaces
         subspace1_distances = cdist(query_subspace1, self.centroids1, metric="cosine")
         subspace2_distances = cdist(query_subspace2, self.centroids2, metric="cosine")
-
         closest_clusters1 = np.argsort(subspace1_distances, axis=1)[:, :nprobe].flatten()
         closest_clusters2 = np.argsort(subspace2_distances, axis=1)[:, :nprobe].flatten()
 
-        # Delete large arrays and collect garbage
-        del subspace1_distances, subspace2_distances
-        gc.collect()
-
         cluster_pairs = np.array([(c1, c2) for c1 in closest_clusters1 for c2 in closest_clusters2])
 
-        del closest_clusters1, closest_clusters2
-        gc.collect()
-
+        # ----------------------------
         # Early Pruning Step
-        representative_vectors = np.array([
-            np.concatenate([self.centroids1[pair[0]], self.centroids2[pair[1]]]) for pair in cluster_pairs
-        ])
+        # ----------------------------
+        # Construct representative vectors for each cluster pair
+        representative_vectors = []
+        for pair in cluster_pairs:
+            # Representative vector: concatenation of the two centroids
+            rep_vec = np.concatenate([self.centroids1[pair[0]], self.centroids2[pair[1]]])
+            representative_vectors.append(rep_vec)
+        representative_vectors = np.array(representative_vectors)
 
+        # Compute distances to representative vectors for pruning
         rep_distances = cdist(query_vector, representative_vectors, metric="cosine").flatten()
 
+        # Select top few cluster pairs based on representative vector distance
+        # pruning_factor controls how many pairs we keep after pruning
         keep_count = min(pruning_factor, len(cluster_pairs)) - 1
         kept_indices = np.argpartition(rep_distances, keep_count)[:keep_count]
-        kept_indices = kept_indices[np.argsort(rep_distances[kept_indices])]
+        kept_indices = kept_indices[np.argsort(rep_distances[kept_indices])]  
         pruned_cluster_pairs = cluster_pairs[kept_indices]
+        # ----------------------------
 
-        # Delete large arrays and collect garbage
-        del cluster_pairs, representative_vectors, rep_distances
-        gc.collect()
-
-        # Gather candidate vectors
+        # Gather candidate vectors from pruned cluster pairs
         candidate_vectors = np.concatenate(
             [self.index_inverted_lists[tuple(pair)] for pair in pruned_cluster_pairs]
         )
 
-        del pruned_cluster_pairs
-        gc.collect()
-
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
-        del candidate_vectors
-        gc.collect()
 
         local_heap = []
         with ThreadPoolExecutor(max_workers=2) as executor:
             future_to_batch = {executor.submit(process_batch, batch): batch for batch in batch_generator}
-            # After submission, batch_generator is no longer needed, but it’s an iterator and consumed anyway.
-
             for future in as_completed(future_to_batch):
                 batch_top_k = future.result()
                 for dist, idx in batch_top_k:
@@ -178,10 +169,6 @@ class IMIIndex(IndexingStrategy):
 
         top_k_distances = np.array([-item[0] for item in local_heap])
         top_k_indices = np.array([item[1] for item in local_heap])
-
-        # Delete local_heap if desired (not necessary as function ends)
-        del local_heap
-        gc.collect()
 
         return top_k_distances, top_k_indices
 
