@@ -102,7 +102,7 @@ class IMIIndex(IndexingStrategy):
             """Function to process a single batch and return local top-k results."""
             start_index = batch[0]
             end_index = batch[-1]
-
+        
             block_data = db.get_sequential_block(start_index, end_index + 1)
 
             relevant_indices = np.array(batch) - start_index
@@ -110,8 +110,11 @@ class IMIIndex(IndexingStrategy):
 
             distances = cdist(query_vector, block_data, metric="cosine").flatten()
 
-            top_indices = np.argsort(distances)[:top_k]
+
+            top_indices = np.argpartition(distances, top_k)[:top_k]
+            top_indices = top_indices[np.argsort(distances[top_indices])]
             return [(distances[idx], batch[idx]) for idx in top_indices]
+        
 
         if query_vector.ndim == 1:
             query_vector = query_vector.reshape(1, -1)
