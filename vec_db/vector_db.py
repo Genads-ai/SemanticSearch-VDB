@@ -19,6 +19,7 @@ class VecDB:
         self.db_path = database_file_path
         self.index_path = index_file_path
         self.index = None
+        self.mmap_data = None
         if new_db:
             if db_size is None:
                 raise ValueError("You need to provide the size of the database")
@@ -27,6 +28,7 @@ class VecDB:
                 os.remove(self.db_path)
             self.generate_database(db_size)
         else:
+            self.mmap_data = np.memmap(self.db_path, dtype=np.float32, mode='r', shape=(self._get_num_records(), DIMENSION))
             if "ivf" in self.index_path:
                 self.index = self._build_index(ivf_adc_index.IVFADCIndex(vectors=self.get_all_rows(),nlist=256,dimension=70))
             else:
@@ -81,20 +83,11 @@ class VecDB:
                 raise ValueError(f"Invalid range: right_index {right_index} exceeds total rows {total_rows}.")
 
             # Compute the byte offsets for the range
-            start_offset = np.int64(left_index) * np.int64(DIMENSION) * np.int64(ELEMENT_SIZE)
-            end_offset = np.int64(right_index) * np.int64(DIMENSION) * np.int64(ELEMENT_SIZE)
+            # start_offset = np.int64(left_index) * np.int64(DIMENSION) * np.int64(ELEMENT_SIZE)
 
             # Memory-map the file for the given range
-            mmap_data = np.memmap(
-                self.db_path,
-                dtype=np.float32,
-                mode='r',
-                offset=start_offset,
-                shape=(right_index - left_index, DIMENSION)
-            )
+            return self.mmap_data[left_index:right_index]
 
-            # Return the data as a regular numpy array (detach from memmap)
-            return np.array(mmap_data)
         except Exception as e:
             print(f"An error occurred while fetching the sequential block: {e}")
             return np.array([])
