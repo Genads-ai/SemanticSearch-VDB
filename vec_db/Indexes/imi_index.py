@@ -77,7 +77,7 @@ class IMIIndex(IndexingStrategy):
 
         print("Assignment complete!")
 
-    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=5000, batch_limit=3000, pruning_factor=1600):
+    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=8000, batch_limit=3000, pruning_factor=1600):
         def batch_numbers(numbers, max_difference, batch_limit):
             numbers.sort()
             start_index = 0
