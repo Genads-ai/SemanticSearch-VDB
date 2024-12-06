@@ -77,7 +77,7 @@ class IMIIndex(IndexingStrategy):
 
         print("Assignment complete!")
 
-    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=2500, batch_limit=8000, pruning_factor=2000):
+    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=6000, batch_limit=8000, pruning_factor=2000):
         def batch_numbers(numbers, max_difference, batch_limit):
             numbers.sort()
             start_index = 0
@@ -161,7 +161,7 @@ class IMIIndex(IndexingStrategy):
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
         local_heap = []
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        with ThreadPoolExecutor(max_workers=3) as executor:
             future_to_batch = {executor.submit(process_batch, batch): batch for batch in batch_generator}
             for future in as_completed(future_to_batch):
                 batch_top_k = future.result()
