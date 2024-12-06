@@ -77,7 +77,7 @@ class IMIIndex(IndexingStrategy):
 
         print("Assignment complete!")
 
-    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=5000, batch_limit=3000, pruning_factor=1600):
+    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=5000, batch_limit=2200, pruning_factor=2000):
         def batch_numbers(numbers, max_difference, batch_limit):
             numbers.sort()
             start_index = 0
@@ -148,6 +148,10 @@ class IMIIndex(IndexingStrategy):
         kept_indices = kept_indices[np.argsort(rep_distances[kept_indices])]  
         pruned_cluster_pairs = cluster_pairs[kept_indices]
         # ----------------------------
+
+        del cluster_pairs
+        del representative_vectors
+        del rep_distances
 
         # Gather candidate vectors from pruned cluster pairs
         candidate_vectors = np.concatenate(
