@@ -77,10 +77,8 @@ class IMIIndex(IndexingStrategy):
 
         print("Assignment complete!")
 
-
-    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=5000, batch_limit=2000):
+    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=5000, batch_limit=2000, pruning_factor=1400):
         def batch_numbers(numbers, max_difference, batch_limit):
-            # Sort the numbers for easier batch formation
             numbers.sort()
             start_index = 0
             batch_count = 0
@@ -92,29 +90,27 @@ class IMIIndex(IndexingStrategy):
                 while end_index < len(numbers) and numbers[end_index] - min_element <= max_difference:
                     end_index += 1
 
-                # Yield the current batch
                 yield numbers[start_index:end_index]
                 batch_count += 1
-
                 start_index = end_index
 
         def process_batch(batch):
-            """Function to process a single batch and return local top-k results."""
             start_index = batch[0]
             end_index = batch[-1]
-        
             block_data = db.get_sequential_block(start_index, end_index + 1)
 
             relevant_indices = np.array(batch) - start_index
             block_data = block_data[relevant_indices]
 
+            # Compute cosine distances
             distances = cdist(query_vector, block_data, metric="cosine").flatten()
 
-
+            # Check if there are more than top_k elements in the heap
+            if len(distances) <= top_k:
+                return list(zip(distances, batch))
             top_indices = np.argpartition(distances, top_k)[:top_k]
             top_indices = top_indices[np.argsort(distances[top_indices])]
             return [(distances[idx], batch[idx]) for idx in top_indices]
-        
 
         if query_vector.ndim == 1:
             query_vector = query_vector.reshape(1, -1)
@@ -129,24 +125,42 @@ class IMIIndex(IndexingStrategy):
         closest_clusters1 = np.argsort(subspace1_distances, axis=1)[:, :nprobe].flatten()
         closest_clusters2 = np.argsort(subspace2_distances, axis=1)[:, :nprobe].flatten()
 
-        cluster_pairs = np.array(
-            [(c1, c2) for c1 in closest_clusters1 for c2 in closest_clusters2]
-        )
+        cluster_pairs = np.array([(c1, c2) for c1 in closest_clusters1 for c2 in closest_clusters2])
 
+        # ----------------------------
+        # Early Pruning Step
+        # ----------------------------
+        # Construct representative vectors for each cluster pair
+        representative_vectors = []
+        for pair in cluster_pairs:
+            # Representative vector: concatenation of the two centroids
+            rep_vec = np.concatenate([self.centroids1[pair[0]], self.centroids2[pair[1]]])
+            representative_vectors.append(rep_vec)
+        representative_vectors = np.array(representative_vectors)
+
+        # Compute distances to representative vectors for pruning
+        rep_distances = cdist(query_vector, representative_vectors, metric="cosine").flatten()
+
+        # Select top few cluster pairs based on representative vector distance
+        # pruning_factor controls how many pairs we keep after pruning
+        keep_count = min(pruning_factor, len(cluster_pairs))
+        kept_indices = np.argpartition(rep_distances, keep_count)[:keep_count]
+        kept_indices = kept_indices[np.argsort(rep_distances[kept_indices])]  
+        pruned_cluster_pairs = cluster_pairs[kept_indices]
+        # ----------------------------
+
+        # Gather candidate vectors from pruned cluster pairs
         candidate_vectors = np.concatenate(
-            [self.index_inverted_lists[tuple(pair)] for pair in cluster_pairs]
+            [self.index_inverted_lists[tuple(pair)] for pair in pruned_cluster_pairs]
         )
 
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
         local_heap = []
-
         with ThreadPoolExecutor(max_workers=2) as executor:
             future_to_batch = {executor.submit(process_batch, batch): batch for batch in batch_generator}
-
             for future in as_completed(future_to_batch):
                 batch_top_k = future.result()
-
                 for dist, idx in batch_top_k:
                     if len(local_heap) < top_k:
                         heapq.heappush(local_heap, (-dist, idx))
@@ -157,8 +171,7 @@ class IMIIndex(IndexingStrategy):
         top_k_indices = np.array([item[1] for item in local_heap])
 
         return top_k_distances, top_k_indices
-      
-      
+
     def build_index(self):
         nq = self.vectors.shape[0]
         if os.path.exists(f"DBIndexes/imi_index_{nq}"):
