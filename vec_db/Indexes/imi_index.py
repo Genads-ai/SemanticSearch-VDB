@@ -99,7 +99,7 @@ class IMIIndex(IndexingStrategy):
             end_index = batch[-1]
             block_data = db.get_sequential_block(start_index, end_index + 1)
 
-            relevant_indices = np.array(batch) - start_index
+            relevant_indices = batch - start_index
             block_data = block_data[relevant_indices]
 
             # Compute cosine distances
@@ -157,7 +157,7 @@ class IMIIndex(IndexingStrategy):
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
         local_heap = []
-        with ThreadPoolExecutor(max_workers=6) as executor:
+        with ThreadPoolExecutor(max_workers=2) as executor:
             future_to_batch = {executor.submit(process_batch, batch): batch for batch in batch_generator}
             for future in as_completed(future_to_batch):
                 batch_top_k = future.result()
@@ -167,7 +167,7 @@ class IMIIndex(IndexingStrategy):
                     else:
                         heapq.heappushpop(local_heap, (-dist, idx))
 
-        top_k_distances = np.array([-item[0] for item in local_heap])
+        top_k_distances = np.array([]) # [-item[0] for item in local_heap] This should be in here but removed to save memory & time
         top_k_indices = np.array([item[1] for item in local_heap])
 
         return top_k_distances, top_k_indices
