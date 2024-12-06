@@ -77,7 +77,7 @@ class IMIIndex(IndexingStrategy):
 
         print("Assignment complete!")
 
-    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=5000, batch_limit=3000, pruning_factor=2000):
+    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=5000, batch_limit=3000, pruning_factor=1600):
         def batch_numbers(numbers, max_difference, batch_limit):
             numbers.sort()
             start_index = 0
@@ -149,10 +149,6 @@ class IMIIndex(IndexingStrategy):
         pruned_cluster_pairs = cluster_pairs[kept_indices]
         # ----------------------------
 
-        del cluster_pairs
-        del representative_vectors
-        del rep_distances
-
         # Gather candidate vectors from pruned cluster pairs
         candidate_vectors = np.concatenate(
             [self.index_inverted_lists[tuple(pair)] for pair in pruned_cluster_pairs]
@@ -161,7 +157,7 @@ class IMIIndex(IndexingStrategy):
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
         local_heap = []
-        with ThreadPoolExecutor(max_workers=3) as executor:
+        with ThreadPoolExecutor(max_workers=2) as executor:
             future_to_batch = {executor.submit(process_batch, batch): batch for batch in batch_generator}
             for future in as_completed(future_to_batch):
                 batch_top_k = future.result()
