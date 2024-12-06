@@ -157,7 +157,7 @@ class IMIIndex(IndexingStrategy):
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
         local_heap = []
-        with ThreadPoolExecutor(max_workers=12) as executor:
+        with ThreadPoolExecutor(max_workers=1) as executor:
             future_to_batch = {executor.submit(process_batch, batch): batch for batch in batch_generator}
             for future in as_completed(future_to_batch):
                 batch_top_k = future.result()
