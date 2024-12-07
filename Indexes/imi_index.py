@@ -82,13 +82,13 @@ class IMIIndex(IndexingStrategy):
             numbers.sort()
             start_index = 0
             batch_count = 0
-
-            while start_index < len(numbers) and batch_count < batch_limit:
+            n = len(numbers)
+            while start_index < n and batch_count < batch_limit:
                 min_element = numbers[start_index]
                 end_index = start_index
 
-                while end_index < len(numbers) and numbers[end_index] - min_element <= max_difference:
-                    end_index += 1
+                end_index = np.searchsorted(numbers, min_element + max_difference, side='right')
+                end_index = min(end_index, n)
 
                 yield numbers[start_index:end_index]
                 batch_count += 1
