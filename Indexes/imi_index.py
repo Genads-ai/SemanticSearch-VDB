@@ -78,6 +78,10 @@ class IMIIndex(IndexingStrategy):
         print("Assignment complete!")
 
     def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=10000, batch_limit=2000, pruning_factor=2200):
+        def cosine_distance(query_normalized, data):
+            data_norm = np.linalg.norm(data, axis=1, keepdims=True)
+            data_normalized = data / data_norm
+            return 1.0 - np.dot(query_normalized, data_normalized.T).flatten()
         def batch_numbers(numbers, max_difference, batch_limit):
             numbers.sort()
             start_index = 0
@@ -103,7 +107,7 @@ class IMIIndex(IndexingStrategy):
             block_data = block_data[relevant_indices]   
 
             # Compute cosine distances
-            distances = cdist(query_vector, block_data, metric="cosine").flatten()
+            distances = cosine_distance(query_vector, block_data).flatten()
 
             # Check if there are more than top_k elements in the heap
             if len(distances) <= top_k:
@@ -114,6 +118,9 @@ class IMIIndex(IndexingStrategy):
 
         if query_vector.ndim == 1:
             query_vector = query_vector.reshape(1, -1)
+
+        query_norm = np.linalg.norm(query_vector, axis=1, keepdims=True)
+        query_vector = query_vector / query_norm
 
         # Split query vector into two subspaces
         query_subspace1 = query_vector[:, :self.subspace_dim]
