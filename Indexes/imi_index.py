@@ -100,7 +100,8 @@ class IMIIndex(IndexingStrategy):
             block_data = db.get_sequential_block(start_index, end_index + 1)
 
             relevant_indices = batch - start_index
-            block_data = block_data[relevant_indices]   
+            block_data = block_data[relevant_indices]
+            block_data = block_data.astype(np.float32) 
 
             # Compute cosine distances
             distances = cdist(query_vector, block_data, metric="cosine").flatten()
@@ -114,6 +115,8 @@ class IMIIndex(IndexingStrategy):
 
         if query_vector.ndim == 1:
             query_vector = query_vector.reshape(1, -1)
+
+        query_vector = query_vector.astype(np.float32)
 
         # Split query vector into two subspaces
         query_subspace1 = query_vector[:, :self.subspace_dim]
@@ -156,7 +159,6 @@ class IMIIndex(IndexingStrategy):
 
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
-        local_heap = []
         all_candidates = []
         with ThreadPoolExecutor(max_workers=2) as executor:
             future_to_batch = {executor.submit(process_batch, batch): batch for batch in batch_generator}
