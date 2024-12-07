@@ -110,7 +110,7 @@ class IMIIndex(IndexingStrategy):
                 return list(zip(distances, batch))
             top_indices = np.argpartition(distances, top_k)[:top_k]
             top_indices = top_indices[np.argsort(distances[top_indices])]
-            return [(distances[idx], batch[idx]) for idx in top_indices]
+            return list(zip(distances[top_indices], batch[top_indices]))
 
         if query_vector.ndim == 1:
             query_vector = query_vector.reshape(1, -1)
