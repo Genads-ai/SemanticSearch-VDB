@@ -129,21 +129,20 @@ class IMIIndex(IndexingStrategy):
         num_centroids1 = len(self.centroids1)
         num_centroids2 = len(self.centroids2)
 
-        # Initialize an array to store combined distances
-        combined_distances = np.empty(num_centroids1 * num_centroids2, dtype=np.float32)
-        centroid_pairs = np.empty((num_centroids1 * num_centroids2, 2), dtype=np.int32)
+        # Compute combined distances directly using broadcasting
+        subspace1_distances = subspace1_distances.astype(np.float32)
+        subspace2_distances = subspace2_distances.astype(np.float32)
 
-        # Compute combined distances and store centroid indices
-        index = 0
-        for c1 in range(num_centroids1):
-            for c2 in range(num_centroids2):
-                combined_distances[index] = subspace1_distances[c1] + subspace2_distances[c2]
-                centroid_pairs[index] = (c1, c2)
-                index += 1
+        # Create a grid of combined distances using broadcasting
+        combined_distances = subspace1_distances[:, None] + subspace2_distances[None, :]
+
+        # Flatten combined distances and generate centroid pair indices
+        combined_distances_flat = combined_distances.ravel()
+        centroid_pairs = np.indices((num_centroids1, num_centroids2)).reshape(2, -1).T
 
         # Select the top nprobe * nprobe centroid pairs
-        top_indices = np.argpartition(combined_distances, nprobe * nprobe)[:nprobe * nprobe]
-        top_indices = top_indices[np.argsort(combined_distances[top_indices])]
+        top_indices = np.argpartition(combined_distances_flat, nprobe * nprobe)[:nprobe * nprobe]
+        top_indices = top_indices[np.argsort(combined_distances_flat[top_indices])]
 
         # Use the top indices to extract cluster pairs
         cluster_pairs = centroid_pairs[top_indices]
