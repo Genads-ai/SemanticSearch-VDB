@@ -101,7 +101,7 @@ class IMIIndex(IndexingStrategy):
 
             relevant_indices = batch - start_index
             block_data = block_data[relevant_indices]
-            block_data = block_data.astype(np.float32) 
+            block_data = block_data.astype(np.float32,copy = False) 
 
             # Compute cosine distances
             distances = cdist(query_vector, block_data, metric="cosine").flatten()
@@ -116,7 +116,7 @@ class IMIIndex(IndexingStrategy):
         if query_vector.ndim == 1:
             query_vector = query_vector.reshape(1, -1)
 
-        query_vector = query_vector.astype(np.float32)
+        query_vector = query_vector.astype(np.float32,copy = False)
 
         # Split query vector into two subspaces
         query_subspace1 = query_vector[:, :self.subspace_dim]
