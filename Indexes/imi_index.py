@@ -108,6 +108,7 @@ class IMIIndex(IndexingStrategy):
             # Check if there are more than top_k elements in the heap
             if len(distances) <= top_k:
                 return list(zip(distances, batch))
+                
             top_indices = np.argpartition(distances, top_k)[:top_k]
             top_indices = top_indices[np.argsort(distances[top_indices])]
             return list(zip(distances[top_indices], batch[top_indices]))
@@ -162,7 +163,7 @@ class IMIIndex(IndexingStrategy):
         keep_count = min(pruning_factor, len(cluster_pairs)) - 1
         kept_indices = np.argpartition(rep_distances, keep_count)[:keep_count]
         kept_indices = kept_indices[np.argsort(rep_distances[kept_indices])]  
-        pruned_cluster_pairs = [cluster_pairs[i] for i in kept_indices]
+        pruned_cluster_pairs = cluster_pairs[kept_indices]
         # ----------------------------
 
         # Gather candidate vectors from pruned cluster pairs
