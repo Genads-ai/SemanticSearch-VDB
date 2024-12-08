@@ -77,9 +77,8 @@ class IMIIndex(IndexingStrategy):
 
         print("Assignment complete!")
 
-    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=10000, batch_limit=2000, pruning_factor=1600):
+    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=10000, batch_limit=2000, pruning_factor=1800):
         def batch_numbers(numbers, max_difference, batch_limit):
-            numbers.sort()
             start_index = 0
             batch_count = 0
             n = len(numbers)
@@ -130,8 +129,8 @@ class IMIIndex(IndexingStrategy):
         num_centroids2 = len(self.centroids2)
 
         # Compute combined distances directly using broadcasting
-        subspace1_distances = subspace1_distances.astype(np.float32)
-        subspace2_distances = subspace2_distances.astype(np.float32)
+        subspace1_distances = subspace1_distances.astype(np.float32, copy=False)
+        subspace2_distances = subspace2_distances.astype(np.float32, copy=False)
 
         # Create a grid of combined distances using broadcasting
         combined_distances = subspace1_distances[:, None] + subspace2_distances[None, :]
@@ -151,12 +150,9 @@ class IMIIndex(IndexingStrategy):
         # Early Pruning Step
         # ----------------------------
         # Construct representative vectors for each cluster pair
-        representative_vectors = []
-        for pair in cluster_pairs:
-            # Representative vector: concatenation of the two centroids
-            rep_vec = np.concatenate([self.centroids1[pair[0]], self.centroids2[pair[1]]])
-            representative_vectors.append(rep_vec)
-        representative_vectors = np.array(representative_vectors)
+        representative_vectors = np.empty((len(cluster_pairs), self.dimension), dtype=np.float32)
+        for idx, pair in enumerate(cluster_pairs):
+            representative_vectors[idx] = np.concatenate([self.centroids1[pair[0]], self.centroids2[pair[1]]])
 
         # Compute distances to representative vectors for pruning
         rep_distances = cdist(query_vector, representative_vectors, metric="cosine").flatten()
@@ -173,6 +169,8 @@ class IMIIndex(IndexingStrategy):
         candidate_vectors = np.concatenate(
             [self.index_inverted_lists[tuple(pair)] for pair in pruned_cluster_pairs]
         )
+        
+        candidate_vectors.sort()
 
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
