@@ -126,19 +126,27 @@ class IMIIndex(IndexingStrategy):
         subspace1_distances = cdist(query_subspace1, self.centroids1, metric="cosine").flatten()
         subspace2_distances = cdist(query_subspace2, self.centroids2, metric="cosine").flatten()
 
-        # Compute all possible pairs of centroids and their combined distances
         num_centroids1 = len(self.centroids1)
         num_centroids2 = len(self.centroids2)
 
-        # Compute combined distances without explicitly creating all pairs
-        combined_distances = []
+        # Initialize an array to store combined distances
+        combined_distances = np.empty(num_centroids1 * num_centroids2, dtype=np.float32)
+        centroid_pairs = np.empty((num_centroids1 * num_centroids2, 2), dtype=np.int32)
+
+        # Compute combined distances and store centroid indices
+        index = 0
         for c1 in range(num_centroids1):
             for c2 in range(num_centroids2):
-                distance = subspace1_distances[c1] + subspace2_distances[c2]
-                combined_distances.append((distance, c1, c2))
+                combined_distances[index] = subspace1_distances[c1] + subspace2_distances[c2]
+                centroid_pairs[index] = (c1, c2)
+                index += 1
 
         # Select the top nprobe * nprobe centroid pairs
-        top_indices = heapq.nsmallest(nprobe * nprobe, combined_distances, key=lambda x: x[0])
+        top_indices = np.argpartition(combined_distances, nprobe * nprobe)[:nprobe * nprobe]
+        top_indices = top_indices[np.argsort(combined_distances[top_indices])]
+
+        # Use the top indices to extract cluster pairs
+        cluster_pairs = centroid_pairs[top_indices]
 
         # Extract the selected pairs
         cluster_pairs = [(item[1], item[2]) for item in top_indices]
