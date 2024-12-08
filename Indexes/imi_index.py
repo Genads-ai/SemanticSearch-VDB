@@ -148,9 +148,7 @@ class IMIIndex(IndexingStrategy):
         # Use the top indices to extract cluster pairs
         cluster_pairs = centroid_pairs[top_indices]
 
-        # Extract the selected pairs
-        cluster_pairs = [(item[1], item[2]) for item in top_indices]
-        # ----------------------------
+        # ----------------------------  
         # Early Pruning Step
         # ----------------------------
         # Construct representative vectors for each cluster pair
