@@ -127,16 +127,21 @@ class IMIIndex(IndexingStrategy):
         subspace2_distances = cdist(query_subspace2, self.centroids2, metric="cosine").flatten()
 
         # Compute all possible pairs of centroids and their combined distances
-        centroid_pairs = list(itertools.product(range(len(self.centroids1)), range(len(self.centroids2))))
-        combined_distances = [
-            subspace1_distances[pair[0]] + subspace2_distances[pair[1]] for pair in centroid_pairs
-        ]
+        num_centroids1 = len(self.centroids1)
+        num_centroids2 = len(self.centroids2)
+
+        # Compute combined distances without explicitly creating all pairs
+        combined_distances = []
+        for c1 in range(num_centroids1):
+            for c2 in range(num_centroids2):
+                distance = subspace1_distances[c1] + subspace2_distances[c2]
+                combined_distances.append((distance, c1, c2))
 
         # Select the top nprobe * nprobe centroid pairs
-        top_indices = np.argpartition(combined_distances, nprobe * nprobe)[:nprobe * nprobe]
-        top_indices = top_indices[np.argsort(np.array(combined_distances)[top_indices])]
-        cluster_pairs = [centroid_pairs[i] for i in top_indices]
+        top_indices = heapq.nsmallest(nprobe * nprobe, combined_distances, key=lambda x: x[0])
 
+        # Extract the selected pairs
+        cluster_pairs = [(item[1], item[2]) for item in top_indices]
         # ----------------------------
         # Early Pruning Step
         # ----------------------------
