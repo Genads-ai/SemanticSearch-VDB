@@ -123,12 +123,19 @@ class IMIIndex(IndexingStrategy):
         query_subspace2 = query_vector[:, self.subspace_dim:]
 
         # Find closest centroids in both subspaces
-        subspace1_distances = cdist(query_subspace1, self.centroids1, metric="cosine")
-        subspace2_distances = cdist(query_subspace2, self.centroids2, metric="cosine")
-        closest_clusters1 = np.argsort(subspace1_distances, axis=1)[:, :nprobe].flatten()
-        closest_clusters2 = np.argsort(subspace2_distances, axis=1)[:, :nprobe].flatten()
+        subspace1_distances = cdist(query_subspace1, self.centroids1, metric="cosine").flatten()
+        subspace2_distances = cdist(query_subspace2, self.centroids2, metric="cosine").flatten()
 
-        cluster_pairs = np.array([(c1, c2) for c1 in closest_clusters1 for c2 in closest_clusters2])
+        # Compute all possible pairs of centroids and their combined distances
+        centroid_pairs = list(itertools.product(range(len(self.centroids1)), range(len(self.centroids2))))
+        combined_distances = [
+            subspace1_distances[pair[0]] + subspace2_distances[pair[1]] for pair in centroid_pairs
+        ]
+
+        # Select the top nprobe * nprobe centroid pairs
+        top_indices = np.argpartition(combined_distances, nprobe * nprobe)[:nprobe * nprobe]
+        top_indices = top_indices[np.argsort(np.array(combined_distances)[top_indices])]
+        cluster_pairs = [centroid_pairs[i] for i in top_indices]
 
         # ----------------------------
         # Early Pruning Step
@@ -149,7 +156,7 @@ class IMIIndex(IndexingStrategy):
         keep_count = min(pruning_factor, len(cluster_pairs)) - 1
         kept_indices = np.argpartition(rep_distances, keep_count)[:keep_count]
         kept_indices = kept_indices[np.argsort(rep_distances[kept_indices])]  
-        pruned_cluster_pairs = cluster_pairs[kept_indices]
+        pruned_cluster_pairs = [cluster_pairs[i] for i in kept_indices]
         # ----------------------------
 
         # Gather candidate vectors from pruned cluster pairs
