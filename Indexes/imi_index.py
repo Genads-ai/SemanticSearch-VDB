@@ -180,6 +180,8 @@ class IMIIndex(IndexingStrategy):
         top_k_distances = np.array([]) # [-item[0] for item in local_heap] This should be in here but removed to save memory & time
         top_k_indices = np.array([item[1] for item in top_k_global])
 
+        print("Top k Indices: ", top_k_indices)
+
         return top_k_distances, top_k_indices
 
     def build_index(self):
