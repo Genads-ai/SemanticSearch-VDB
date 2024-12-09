@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class IMIIndex(IndexingStrategy):
-    def __init__(self, vectors, nlist, dimension=70, cache_file='query_cache.pkl'):
+    def __init__(self, vectors, nlist, dimension=70):
         assert dimension % 2 == 0, "Dimension must be divisible by 2 for IMI."
         self.nlist = nlist
         self.dimension = dimension
@@ -28,8 +28,6 @@ class IMIIndex(IndexingStrategy):
         self.centroids1 = None
         self.centroids2 = None
         self.index_inverted_lists = {}
-        self.cache_file = cache_file
-        self.query_cache = self.load_cache()
 
     def train(self):
         print("Training IMI centroids...")
@@ -81,8 +79,6 @@ class IMIIndex(IndexingStrategy):
         print("Assignment complete!")
 
     def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=10000, batch_limit=2000, pruning_factor=2000):
-        def get_query_hash(query_vector):
-            return hash(query_vector.tostring())
 
         def batch_numbers(numbers, max_difference, batch_limit):
             start_index = 0
@@ -121,14 +117,6 @@ class IMIIndex(IndexingStrategy):
         if query_vector.ndim == 1:
             query_vector = query_vector.reshape(1, -1)
 
-        query_hash = get_query_hash(query_vector)
-        prev_distances = np.array([])
-        prev_indices = np.array([])
-
-        if db._get_num_records() >= 10_000_000 and query_hash in self.query_cache:
-            if db._get_num_records() == 20_000_000:
-                return self.query_cache[query_hash]
-            prev_distances,prev_indices = self.query_cache[query_hash]
 
         query_vector = query_vector.astype(np.float16,copy = False)
 
@@ -139,24 +127,48 @@ class IMIIndex(IndexingStrategy):
         # Find closest centroids in both subspaces
         subspace1_distances = cdist(query_subspace1, self.centroids1, metric="cosine").flatten()
         subspace2_distances = cdist(query_subspace2, self.centroids2, metric="cosine").flatten()
-        closest_clusters1 = np.argsort(subspace1_distances)[:nprobe]
-        closest_clusters2 = np.argsort(subspace2_distances)[:nprobe]
-        
-        cluster_pairs = list(itertools.product(closest_clusters1, closest_clusters2))
 
-        candidate_vectors = np.array(
-            [index for pair in cluster_pairs for index in self.index_inverted_lists[pair]],
-            dtype=np.int32
+        # Create a grid of combined distances using broadcasting
+        combined_distances = subspace1_distances[:, None] + subspace2_distances[None, :]
+
+        # Flatten combined distances and generate centroid pair indices
+        combined_distances_flat = combined_distances.ravel()
+        centroid_pairs = np.indices((256, 256)).reshape(2, -1).T
+
+        # Select the top nprobe * nprobe centroid pairs
+        top_indices = np.argpartition(combined_distances_flat, nprobe * nprobe)[:nprobe * nprobe]
+        top_indices = top_indices[np.argsort(combined_distances_flat[top_indices])]
+
+        # Use the top indices to extract cluster pairs
+        cluster_pairs = centroid_pairs[top_indices]
+
+        # ----------------------------  
+        # Early Pruning Step
+        # ----------------------------
+        # Construct representative vectors for each cluster pair
+        representative_vectors = np.empty((len(cluster_pairs), self.dimension), dtype=np.float16)
+        for idx, pair in enumerate(cluster_pairs):
+            representative_vectors[idx] = np.concatenate([
+                self.centroids1[pair[0]], 
+                self.centroids2[pair[1]]
+            ])
+
+        # Compute distances to representative vectors for pruning
+        rep_distances = cdist(query_vector, representative_vectors, metric="cosine").flatten()
+
+        # Select top few cluster pairs based on representative vector distance
+        # pruning_factor controls how many pairs we keep after pruning
+        keep_count = min(pruning_factor, len(cluster_pairs)) - 1
+        kept_indices = np.argpartition(rep_distances, keep_count)[:keep_count]
+        kept_indices = kept_indices[np.argsort(rep_distances[kept_indices])]  
+        pruned_cluster_pairs = cluster_pairs[kept_indices]
+        # ----------------------------
+        # Gather candidate vectors from pruned cluster pairs
+        candidate_vectors = np.concatenate(
+            [self.index_inverted_lists[tuple(pair)] for pair in pruned_cluster_pairs]
         )
 
         candidate_vectors.sort()
-
-        if db._get_num_records() == 20_000_000:
-            candidate_vectors = candidate_vectors[candidate_vectors >= 15_000_000]
-        elif db._get_num_records() == 15_000_000:
-            candidate_vectors = candidate_vectors[candidate_vectors >= 10_000_000]
-        elif db._get_num_records() == 10_000_000:
-            candidate_vectors = candidate_vectors[candidate_vectors >= 1_000_000]
 
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
@@ -170,17 +182,6 @@ class IMIIndex(IndexingStrategy):
         top_k_global = heapq.nsmallest(top_k, all_candidates, key=lambda x: x[0])
         top_k_distances = np.array([item[0] for item in top_k_global]) # [-item[0] for item in local_heap] This should be in here but removed to save memory & time
         top_k_indices = np.array([item[1] for item in top_k_global])
-
-        combined_distances = np.concatenate([prev_distances, top_k_distances])
-        combined_indices = np.concatenate([prev_indices, top_k_indices])
-
-        # Select the final top k
-        final_top_k_indices = np.argsort(combined_distances)[:top_k]
-        top_k_distances = combined_distances[final_top_k_indices]
-        top_k_indices = combined_indices[final_top_k_indices]
-
-        self.query_cache[query_hash] = (top_k_distances, top_k_indices)
-        self.save_cache()
 
         return top_k_distances, top_k_indices
 
@@ -216,13 +217,3 @@ class IMIIndex(IndexingStrategy):
         self.index_inverted_lists = data["index_inverted_lists"]
         # print("Index loaded successfully!")
         return self
-
-    def load_cache(self):
-        if os.path.exists(self.cache_file):
-            with open(self.cache_file, "rb") as f:
-                return pickle.load(f)
-        return {}
-
-    def save_cache(self):
-        with open(self.cache_file, "wb") as f:
-            pickle.dump(self.query_cache, f)
