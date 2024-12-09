@@ -103,7 +103,7 @@ class IMIIndex(IndexingStrategy):
             block_data = block_data.astype(np.float16,copy = False) 
 
             # Compute cosine distances
-            distances = cdist(query_vector, block_data, metric="cosine").flatten()
+            distances = cdist(query_vector, block_data, metric="cosine").flatten().astype(np.float16,copy = False)
 
             # Check if there are more than top_k elements in the heap
             if len(distances) <= top_k:
@@ -126,10 +126,10 @@ class IMIIndex(IndexingStrategy):
         subspace2_distances = cdist(query_subspace2, self.centroids2, metric="cosine").flatten()
 
         # Create a grid of combined distances using broadcasting
-        combined_distances = subspace1_distances[:, None] + subspace2_distances[None, :].astype(np.float16)
+        combined_distances = subspace1_distances[:, None] + subspace2_distances[None, :]
 
         # Flatten combined distances and generate centroid pair indices
-        combined_distances_flat = combined_distances.ravel().astype(np.float16)
+        combined_distances_flat = combined_distances.ravel()
         centroid_pairs = np.indices((256, 256)).reshape(2, -1).T
 
         # Select the top nprobe * nprobe centroid pairs
@@ -146,12 +146,12 @@ class IMIIndex(IndexingStrategy):
         representative_vectors = np.empty((len(cluster_pairs), self.dimension), dtype=np.float16)
         for idx, pair in enumerate(cluster_pairs):
             representative_vectors[idx] = np.concatenate([
-                self.centroids1[pair[0]].astype(np.float16), 
-                self.centroids2[pair[1]].astype(np.float16)
+                self.centroids1[pair[0]], 
+                self.centroids2[pair[1]]
             ])
 
         # Compute distances to representative vectors for pruning
-        rep_distances = cdist(query_vector, representative_vectors, metric="cosine").flatten().astype(np.float16)
+        rep_distances = cdist(query_vector, representative_vectors, metric="cosine").flatten()
 
         # Select top few cluster pairs based on representative vector distance
         # pruning_factor controls how many pairs we keep after pruning
