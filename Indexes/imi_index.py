@@ -125,7 +125,7 @@ class IMIIndex(IndexingStrategy):
         prev_distances = np.array([])
         prev_indices = np.array([])
 
-        if db._get_num_records() == 20_000_000 and query_hash in self.query_cache:
+        if db._get_num_records() >= 15_000_000 and query_hash in self.query_cache:
             prev_distances,prev_indices = self.query_cache[query_hash]
 
         query_vector = query_vector.astype(np.float16,copy = False)
@@ -182,6 +182,8 @@ class IMIIndex(IndexingStrategy):
 
         if db._get_num_records() == 20_000_000:
             candidate_vectors = candidate_vectors[candidate_vectors >= 15_000_000]
+        elif db._get_num_records() == 15_000_000:
+            candidate_vectors = candidate_vectors[candidate_vectors >= 10_000_000]
 
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
@@ -196,28 +198,19 @@ class IMIIndex(IndexingStrategy):
         top_k_distances = np.array([item[0] for item in top_k_global]) # [-item[0] for item in local_heap] This should be in here but removed to save memory & time
         top_k_indices = np.array([item[1] for item in top_k_global])
 
-        if db._get_num_records() == 20_000_000:
-            combined_distances = np.concatenate([prev_distances, top_k_distances])
-            combined_indices = np.concatenate([prev_indices, top_k_indices])
-            print("Combined Distances: ", combined_distances)
-            print("Combined Indices: ", combined_indices)
+        combined_distances = np.concatenate([prev_distances, top_k_distances])
+        combined_indices = np.concatenate([prev_indices, top_k_indices])
 
-            # Select the final top k
-            final_top_k_indices = np.argsort(combined_distances)[:top_k]
-            top_k_distances = combined_distances[final_top_k_indices]
-            top_k_indices = combined_indices[final_top_k_indices]
+        # Select the final top k
+        final_top_k_indices = np.argsort(combined_distances)[:top_k]
+        top_k_distances = combined_distances[final_top_k_indices]
+        top_k_indices = combined_indices[final_top_k_indices]
 
-            return top_k_distances, top_k_indices
-
-
-        print("Top k Indices: ", top_k_indices)
-
-        # If size is 15M then save the cache
-        if db._get_num_records() == 15_000_000:
-            self.query_cache[query_hash] = (top_k_distances, top_k_indices)
-            self.save_cache()
+        self.query_cache[query_hash] = (top_k_distances, top_k_indices)
+        self.save_cache()
 
         return top_k_distances, top_k_indices
+
 
     def build_index(self):
         nq = self.vectors.shape[0]
@@ -254,11 +247,9 @@ class IMIIndex(IndexingStrategy):
     def load_cache(self):
         if os.path.exists(self.cache_file):
             with open(self.cache_file, "rb") as f:
-                print(f"Loading query cache from {self.cache_file}")
                 return pickle.load(f)
         return {}
 
     def save_cache(self):
         with open(self.cache_file, "wb") as f:
-            print(f"Saving query cache to {self.cache_file}")
             pickle.dump(self.query_cache, f)
