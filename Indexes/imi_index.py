@@ -77,7 +77,7 @@ class IMIIndex(IndexingStrategy):
 
         print("Assignment complete!")
 
-    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=10000, batch_limit=2000, pruning_factor=2200):
+    def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=10000, batch_limit=2000, pruning_factor=2000):
         def batch_numbers(numbers, max_difference, batch_limit):
             start_index = 0
             batch_count = 0
@@ -124,10 +124,20 @@ class IMIIndex(IndexingStrategy):
         # Find closest centroids in both subspaces
         subspace1_distances = cdist(query_subspace1, self.centroids1, metric="cosine")
         subspace2_distances = cdist(query_subspace2, self.centroids2, metric="cosine")
-        closest_clusters1 = np.argsort(subspace1_distances, axis=1)[:, :nprobe].flatten()
-        closest_clusters2 = np.argsort(subspace2_distances, axis=1)[:, :nprobe].flatten()
 
-        cluster_pairs = np.array([(c1, c2) for c1 in closest_clusters1 for c2 in closest_clusters2])
+        # Create a grid of combined distances using broadcasting
+        combined_distances = subspace1_distances[:, None] + subspace2_distances[None, :].astype(np.float16)
+
+        # Flatten combined distances and generate centroid pair indices
+        combined_distances_flat = combined_distances.ravel().astype(np.float16)
+        centroid_pairs = np.indices((256, 256)).reshape(2, -1).T
+
+        # Select the top nprobe * nprobe centroid pairs
+        top_indices = np.argpartition(combined_distances_flat, nprobe * nprobe)[:nprobe * nprobe]
+        top_indices = top_indices[np.argsort(combined_distances_flat[top_indices])]
+
+        # Use the top indices to extract cluster pairs
+        cluster_pairs = centroid_pairs[top_indices]
 
         # ----------------------------
         # Early Pruning Step
