@@ -146,6 +146,7 @@ class IMIIndex(IndexingStrategy):
             [index for pair in cluster_pairs for index in self.index_inverted_lists[pair]],
             dtype=np.int32
         )
+
         candidate_vectors.sort()
 
         if db._get_num_records() == 20_000_000:
@@ -157,15 +158,18 @@ class IMIIndex(IndexingStrategy):
 
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
-        all_candidates = []
+        top_k_heap = []
         with ThreadPoolExecutor(max_workers=2) as executor:
             future_to_batch = {executor.submit(process_batch, batch): batch for batch in batch_generator}
             for future in as_completed(future_to_batch):
                 batch_top_k = future.result()
-                all_candidates.extend(batch_top_k)
+                for distance, index in batch_top_k:
+                    heapq.heappush(top_k_heap, (-distance, index))
+                    if len(top_k_heap) > top_k:
+                        heapq.heappop(top_k_heap)
 
-        top_k_global = heapq.nsmallest(top_k, all_candidates, key=lambda x: x[0])
-        top_k_distances = np.array([item[0] for item in top_k_global]) # [-item[0] for item in local_heap] This should be in here but removed to save memory & time
+        top_k_global = heapq.nsmallest(top_k, top_k_heap, key=lambda x: x[0])
+        top_k_distances = np.array([-item[0] for item in top_k_global]) # [-item[0] for item in local_heap] This should be in here but removed to save memory & time
         top_k_indices = np.array([item[1] for item in top_k_global])
 
         combined_distances = np.concatenate([prev_distances, top_k_distances])
