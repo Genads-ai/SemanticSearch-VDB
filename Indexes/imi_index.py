@@ -122,8 +122,8 @@ class IMIIndex(IndexingStrategy):
         query_subspace2 = query_vector[:, self.subspace_dim:]
 
         # Find closest centroids in both subspaces
-        subspace1_distances = cdist(query_subspace1, self.centroids1, metric="cosine")
-        subspace2_distances = cdist(query_subspace2, self.centroids2, metric="cosine")
+        subspace1_distances = cdist(query_subspace1, self.centroids1, metric="cosine").flatten()
+        subspace2_distances = cdist(query_subspace2, self.centroids2, metric="cosine").flatten()
 
         # Create a grid of combined distances using broadcasting
         combined_distances = subspace1_distances[:, None] + subspace2_distances[None, :].astype(np.float16)
