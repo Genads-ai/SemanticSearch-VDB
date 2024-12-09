@@ -123,8 +123,8 @@ class IMIIndex(IndexingStrategy):
             query_subspace2 = query_vector[:, self.subspace_dim:]
 
             # Find closest centroids in both subspaces
-            subspace1_distances = cdist(query_subspace1, self.centroids1, metric="cosine").flatten().astype(np.float16)
-            subspace2_distances = cdist(query_subspace2, self.centroids2, metric="cosine").flatten().astype(np.float16)
+            subspace1_distances = cdist(query_subspace1, self.centroids1, metric="cosine").flatten().astype(np.float16, copy=False)
+            subspace2_distances = cdist(query_subspace2, self.centroids2, metric="cosine").flatten().astype(np.float16, copy=False)
 
             num_centroids1 = len(self.centroids1)
             num_centroids2 = len(self.centroids2)
@@ -134,10 +134,10 @@ class IMIIndex(IndexingStrategy):
             subspace2_distances = subspace2_distances.astype(np.float16, copy=False)
 
             # Create a grid of combined distances using broadcasting
-            combined_distances = subspace1_distances[:, None] + subspace2_distances[None, :].astype(np.float16)
+            combined_distances = subspace1_distances[:, None] + subspace2_distances[None, :]
 
             # Flatten combined distances and generate centroid pair indices
-            combined_distances_flat = combined_distances.ravel().astype(np.float16)
+            combined_distances_flat = combined_distances.ravel().astype(np.float16, copy=False)
             centroid_pairs = np.indices((num_centroids1, num_centroids2)).reshape(2, -1).T
 
             # Select the top nprobe * nprobe centroid pairs
@@ -151,12 +151,15 @@ class IMIIndex(IndexingStrategy):
             # Early Pruning Step
             # ----------------------------
             # Construct representative vectors for each cluster pair
-            representative_vectors = np.empty((len(cluster_pairs), self.dimension), dtype=np.float16)
-            for idx, pair in enumerate(cluster_pairs):
-                representative_vectors[idx] = np.concatenate([
-                    self.centroids1[pair[0]].astype(np.float16), 
-                    self.centroids2[pair[1]].astype(np.float16)
-                ])
+            # Extract the cluster indices from cluster_pairs
+            cluster1_indices, cluster2_indices = cluster_pairs[:, 0], cluster_pairs[:, 1]
+
+            # Gather the corresponding centroids for both subspaces
+            centroids1_selected = self.centroids1[cluster1_indices]
+            centroids2_selected = self.centroids2[cluster2_indices]
+
+            # Concatenate the centroids along the feature axis
+            representative_vectors = np.hstack((centroids1_selected, centroids2_selected)).astype(np.float16)
 
             # Compute distances to representative vectors for pruning
             rep_distances = cdist(query_vector, representative_vectors, metric="cosine").flatten().astype(np.float16)
