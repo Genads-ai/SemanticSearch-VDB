@@ -78,119 +78,110 @@ class IMIIndex(IndexingStrategy):
         print("Assignment complete!")
 
     def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=10000, batch_limit=2000, pruning_factor=2000):
-            def batch_numbers(numbers, max_difference, batch_limit):
-                start_index = 0
-                batch_count = 0
-                n = len(numbers)
-                while start_index < n and batch_count < batch_limit:
-                    min_element = numbers[start_index]
-                    end_index = start_index
+        def batch_numbers(numbers, max_difference, batch_limit):
+            start_index = 0
+            batch_count = 0
+            n = len(numbers)
+            while start_index < n and batch_count < batch_limit:
+                min_element = numbers[start_index]
+                end_index = start_index
 
-                    end_index = np.searchsorted(numbers, min_element + max_difference, side='right')
-                    end_index = min(end_index, n)
+                end_index = np.searchsorted(numbers, min_element + max_difference, side='right')
+                end_index = min(end_index, n)
 
-                    yield numbers[start_index:end_index]
-                    batch_count += 1
-                    start_index = end_index
+                yield numbers[start_index:end_index]
+                batch_count += 1
+                start_index = end_index
 
-            def process_batch(batch):
-                start_index = batch[0]
-                end_index = batch[-1]
-                block_data = db.get_sequential_block(start_index, end_index + 1)
+        def process_batch(batch):
+            start_index = batch[0]
+            end_index = batch[-1]
+            block_data = db.get_sequential_block(start_index, end_index + 1)
 
-                relevant_indices = batch - start_index
-                block_data = block_data[relevant_indices]
-                block_data = block_data.astype(np.float16, copy=False) 
+            relevant_indices = batch - start_index
+            block_data = block_data[relevant_indices]
+            block_data = block_data.astype(np.float16,copy = False) 
 
-                # Compute cosine distances
-                distances = cdist(query_vector, block_data, metric="cosine").flatten().astype(np.float16)
+            # Compute cosine distances
+            distances = cdist(query_vector, block_data, metric="cosine").flatten()
 
-                # Check if there are more than top_k elements in the heap
-                if len(distances) <= top_k:
-                    return list(zip(distances, batch))
-                    
-                top_indices = np.argpartition(distances, top_k)[:top_k]
-                top_indices = top_indices[np.argsort(distances[top_indices])]
-                return list(zip(distances[top_indices], batch[top_indices]))
+            # Check if there are more than top_k elements in the heap
+            if len(distances) <= top_k:
+                return list(zip(distances, batch))
+            top_indices = np.argpartition(distances, top_k)[:top_k]
+            top_indices = top_indices[np.argsort(distances[top_indices])]
+            return list(zip(distances[top_indices], batch[top_indices]))
 
-            if query_vector.ndim == 1:
-                query_vector = query_vector.reshape(1, -1)
+        if query_vector.ndim == 1:
+            query_vector = query_vector.reshape(1, -1)
 
-            query_vector = query_vector.astype(np.float16, copy=False)
+        query_vector = query_vector.astype(np.float16,copy = False)
 
-            # Split query vector into two subspaces
-            query_subspace1 = query_vector[:, :self.subspace_dim]
-            query_subspace2 = query_vector[:, self.subspace_dim:]
+        # Split query vector into two subspaces
+        query_subspace1 = query_vector[:, :self.subspace_dim]
+        query_subspace2 = query_vector[:, self.subspace_dim:]
 
-            # Find closest centroids in both subspaces
-            subspace1_distances = cdist(query_subspace1, self.centroids1, metric="cosine").flatten().astype(np.float16)
-            subspace2_distances = cdist(query_subspace2, self.centroids2, metric="cosine").flatten().astype(np.float16)
+        # Find closest centroids in both subspaces
+        subspace1_distances = cdist(query_subspace1, self.centroids1, metric="cosine").flatten()
+        subspace2_distances = cdist(query_subspace2, self.centroids2, metric="cosine").flatten()
 
-            num_centroids1 = len(self.centroids1)
-            num_centroids2 = len(self.centroids2)
+        # Create a grid of combined distances using broadcasting
+        combined_distances = subspace1_distances[:, None] + subspace2_distances[None, :].astype(np.float16)
 
-            # Compute combined distances directly using broadcasting
-            subspace1_distances = subspace1_distances.astype(np.float16, copy=False)
-            subspace2_distances = subspace2_distances.astype(np.float16, copy=False)
+        # Flatten combined distances and generate centroid pair indices
+        combined_distances_flat = combined_distances.ravel().astype(np.float16)
+        centroid_pairs = np.indices((256, 256)).reshape(2, -1).T
 
-            # Create a grid of combined distances using broadcasting
-            combined_distances = subspace1_distances[:, None] + subspace2_distances[None, :].astype(np.float16)
+        # Select the top nprobe * nprobe centroid pairs
+        top_indices = np.argpartition(combined_distances_flat, nprobe * nprobe)[:nprobe * nprobe]
+        top_indices = top_indices[np.argsort(combined_distances_flat[top_indices])]
 
-            # Flatten combined distances and generate centroid pair indices
-            combined_distances_flat = combined_distances.ravel().astype(np.float16)
-            centroid_pairs = np.indices((num_centroids1, num_centroids2)).reshape(2, -1).T
+        # Use the top indices to extract cluster pairs
+        cluster_pairs = centroid_pairs[top_indices]
 
-            # Select the top nprobe * nprobe centroid pairs
-            top_indices = np.argpartition(combined_distances_flat, nprobe * nprobe)[:nprobe * nprobe]
-            top_indices = top_indices[np.argsort(combined_distances_flat[top_indices])]
+        # ----------------------------  
+        # Early Pruning Step
+        # ----------------------------
+        # Construct representative vectors for each cluster pair
+        representative_vectors = np.empty((len(cluster_pairs), self.dimension), dtype=np.float16)
+        for idx, pair in enumerate(cluster_pairs):
+            representative_vectors[idx] = np.concatenate([
+                self.centroids1[pair[0]].astype(np.float16), 
+                self.centroids2[pair[1]].astype(np.float16)
+            ])
 
-            # Use the top indices to extract cluster pairs
-            cluster_pairs = centroid_pairs[top_indices]
+        # Compute distances to representative vectors for pruning
+        rep_distances = cdist(query_vector, representative_vectors, metric="cosine").flatten().astype(np.float16)
 
-            # ----------------------------  
-            # Early Pruning Step
-            # ----------------------------
-            # Construct representative vectors for each cluster pair
-            representative_vectors = np.empty((len(cluster_pairs), self.dimension), dtype=np.float16)
-            for idx, pair in enumerate(cluster_pairs):
-                representative_vectors[idx] = np.concatenate([
-                    self.centroids1[pair[0]].astype(np.float16), 
-                    self.centroids2[pair[1]].astype(np.float16)
-                ])
+        # Select top few cluster pairs based on representative vector distance
+        # pruning_factor controls how many pairs we keep after pruning
+        keep_count = min(pruning_factor, len(cluster_pairs)) - 1
+        kept_indices = np.argpartition(rep_distances, keep_count)[:keep_count]
+        kept_indices = kept_indices[np.argsort(rep_distances[kept_indices])]  
+        pruned_cluster_pairs = cluster_pairs[kept_indices]
+        # ----------------------------
+        # Gather candidate vectors from pruned cluster pairs
+        candidate_vectors = np.concatenate(
+            [self.index_inverted_lists[tuple(pair)] for pair in pruned_cluster_pairs]
+        )
 
-            # Compute distances to representative vectors for pruning
-            rep_distances = cdist(query_vector, representative_vectors, metric="cosine").flatten().astype(np.float16)
+        candidate_vectors.sort()
 
-            # Select top few cluster pairs based on representative vector distance
-            # pruning_factor controls how many pairs we keep after pruning
-            keep_count = min(pruning_factor, len(cluster_pairs)) - 1
-            kept_indices = np.argpartition(rep_distances, keep_count)[:keep_count]
-            kept_indices = kept_indices[np.argsort(rep_distances[kept_indices])]  
-            pruned_cluster_pairs = cluster_pairs[kept_indices]
-            # ----------------------------
+        batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
-            # Gather candidate vectors from pruned cluster pairs
-            candidate_vectors = np.concatenate(
-                [self.index_inverted_lists[tuple(pair)] for pair in pruned_cluster_pairs]
-            )
-            
-            candidate_vectors.sort()
+        all_candidates = []
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_to_batch = {executor.submit(process_batch, batch): batch for batch in batch_generator}
+            for future in as_completed(future_to_batch):
+                batch_top_k = future.result()
+                all_candidates.extend(batch_top_k)
 
-            batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
+        top_k_global = heapq.nsmallest(top_k, all_candidates, key=lambda x: x[0])
+        top_k_distances = np.array([]) # [-item[0] for item in local_heap] This should be in here but removed to save memory & time
+        top_k_indices = np.array([item[1] for item in top_k_global])
 
-            all_candidates = []
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                future_to_batch = {executor.submit(process_batch, batch): batch for batch in batch_generator}
-                for future in as_completed(future_to_batch):
-                    batch_top_k = future.result()
-                    all_candidates.extend(batch_top_k)
+        return top_k_distances, top_k_indices
 
-            top_k_global = heapq.nsmallest(top_k, all_candidates, key=lambda x: x[0])
-            top_k_distances = np.array([]) # [-item[0] for item in local_heap] This should be in here but removed to save memory & time
-            top_k_indices = np.array([item[1] for item in top_k_global])
-
-            return top_k_distances, top_k_indices
-    
     def build_index(self):
         nq = self.vectors.shape[0]
         if os.path.exists(f"DBIndexes/imi_index_{nq}"):
