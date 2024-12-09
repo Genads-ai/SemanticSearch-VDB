@@ -147,34 +147,9 @@ class IMIIndex(IndexingStrategy):
             # Use the top indices to extract cluster pairs
             cluster_pairs = centroid_pairs[top_indices]
 
-            # ----------------------------  
-            # Early Pruning Step
-            # ----------------------------
-            # Construct representative vectors for each cluster pair
-            # Extract the cluster indices from cluster_pairs
-            cluster1_indices, cluster2_indices = cluster_pairs[:, 0], cluster_pairs[:, 1]
-
-            # Gather the corresponding centroids for both subspaces
-            centroids1_selected = self.centroids1[cluster1_indices]
-            centroids2_selected = self.centroids2[cluster2_indices]
-
-            # Concatenate the centroids along the feature axis
-            representative_vectors = np.hstack((centroids1_selected, centroids2_selected)).astype(np.float16)
-
-            # Compute distances to representative vectors for pruning
-            rep_distances = cdist(query_vector, representative_vectors, metric="cosine").flatten().astype(np.float16)
-
-            # Select top few cluster pairs based on representative vector distance
-            # pruning_factor controls how many pairs we keep after pruning
-            keep_count = min(pruning_factor, len(cluster_pairs)) - 1
-            kept_indices = np.argpartition(rep_distances, keep_count)[:keep_count]
-            kept_indices = kept_indices[np.argsort(rep_distances[kept_indices])]  
-            pruned_cluster_pairs = cluster_pairs[kept_indices]
-            # ----------------------------
-
             # Gather candidate vectors from pruned cluster pairs
             candidate_vectors = np.concatenate(
-                [self.index_inverted_lists[tuple(pair)] for pair in pruned_cluster_pairs]
+                [self.index_inverted_lists[tuple(pair)] for pair in cluster_pairs]
             )
             
             candidate_vectors.sort()
