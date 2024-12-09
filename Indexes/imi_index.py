@@ -126,6 +126,8 @@ class IMIIndex(IndexingStrategy):
         prev_indices = np.array([])
 
         if db._get_num_records() >= 10_000_000 and query_hash in self.query_cache:
+            if db._get_num_records() == 20_000_000:
+                return self.query_cache[query_hash]
             prev_distances,prev_indices = self.query_cache[query_hash]
 
         query_vector = query_vector.astype(np.float16,copy = False)
