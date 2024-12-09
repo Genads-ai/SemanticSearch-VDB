@@ -152,6 +152,8 @@ class IMIIndex(IndexingStrategy):
             candidate_vectors = candidate_vectors[candidate_vectors >= 15_000_000]
         elif db._get_num_records() == 15_000_000:
             candidate_vectors = candidate_vectors[candidate_vectors >= 10_000_000]
+        elif db._get_num_records() == 10_000_000:
+            candidate_vectors = candidate_vectors[candidate_vectors >= 1_000_000]
 
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
