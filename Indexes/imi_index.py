@@ -100,6 +100,7 @@ class IMIIndex(IndexingStrategy):
 
                 relevant_indices = batch - start_index
                 block_data = block_data[relevant_indices]
+                block_data = block_data.astype(np.float16, copy=False) 
 
                 # Compute cosine distances
                 distances = cdist(query_vector, block_data, metric="cosine").flatten().astype(np.float16, copy=False)

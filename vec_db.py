@@ -94,7 +94,7 @@ class VecDB:
                 raise IOError(f"Failed to read the complete block from {left_index} to {right_index}.")
 
             # Convert bytes to NumPy array
-            block = np.frombuffer(bytes_read, dtype=np.float32).reshape((num_vectors, DIMENSION)).astype(np.float16)
+            block = np.frombuffer(bytes_read, dtype=np.float32).reshape((num_vectors, DIMENSION))
 
             return block
         except Exception as e:
