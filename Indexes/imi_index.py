@@ -142,10 +142,10 @@ class IMIIndex(IndexingStrategy):
         
         cluster_pairs = list(itertools.product(closest_clusters1, closest_clusters2))
 
-        candidate_vectors = np.concatenate(
-            [self.index_inverted_lists[pair] for pair in cluster_pairs]
+        candidate_vectors = np.array(
+            [index for pair in cluster_pairs for index in self.index_inverted_lists[pair]],
+            dtype=np.int32
         )
-
         candidate_vectors.sort()
 
         if db._get_num_records() == 20_000_000:
