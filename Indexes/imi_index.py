@@ -129,10 +129,6 @@ class IMIIndex(IndexingStrategy):
             num_centroids1 = len(self.centroids1)
             num_centroids2 = len(self.centroids2)
 
-            # Compute combined distances directly using broadcasting
-            subspace1_distances = subspace1_distances.astype(np.float16, copy=False)
-            subspace2_distances = subspace2_distances.astype(np.float16, copy=False)
-
             # Create a grid of combined distances using broadcasting
             combined_distances = subspace1_distances[:, None] + subspace2_distances[None, :]
 
