@@ -125,7 +125,7 @@ class IMIIndex(IndexingStrategy):
         prev_distances = np.array([])
         prev_indices = np.array([])
 
-        if db._get_num_records() >= 15_000_000 and query_hash in self.query_cache:
+        if db._get_num_records() >= 10_000_000 and query_hash in self.query_cache:
             prev_distances,prev_indices = self.query_cache[query_hash]
 
         query_vector = query_vector.astype(np.float16,copy = False)
@@ -143,7 +143,7 @@ class IMIIndex(IndexingStrategy):
         cluster_pairs = list(itertools.product(closest_clusters1, closest_clusters2))
 
         candidate_vectors = np.concatenate(
-            [self.index_inverted_lists[tuple(pair)] for pair in cluster_pairs]
+            [self.index_inverted_lists[pair] for pair in cluster_pairs]
         )
 
         candidate_vectors.sort()
