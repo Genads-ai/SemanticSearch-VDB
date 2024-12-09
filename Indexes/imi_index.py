@@ -142,7 +142,6 @@ class IMIIndex(IndexingStrategy):
 
             # Use the top indices to extract cluster pairs
             cluster_pairs = centroid_pairs[top_indices]
-
             # ----------------------------  
             # Early Pruning Step
             # ----------------------------
@@ -161,8 +160,9 @@ class IMIIndex(IndexingStrategy):
             rep_distances = cdist(query_vector, representative_vectors, metric="cosine").flatten().astype(np.float16)
 
             # Calculate the 75th percentile distance
-            percentile_75 = np.percentile(rep_distances, 40)
+            percentile_75 = np.percentile(rep_distances, 30)
 
+            print(f"75th percentile distance: {percentile_75} and average distance: {np.mean(rep_distances)}")
 
             # Dynamically prune cluster pairs based on the 75th percentile distance
             kept_indices = np.where(rep_distances <= percentile_75)[0]
