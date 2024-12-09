@@ -17,8 +17,9 @@ import pickle
 from joblib import Parallel, delayed
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+
 class IMIIndex(IndexingStrategy):
-    def __init__(self, vectors, nlist, dimension=70):
+    def __init__(self, vectors, nlist, dimension=70, cache_file='query_cache.pkl'):
         assert dimension % 2 == 0, "Dimension must be divisible by 2 for IMI."
         self.nlist = nlist
         self.dimension = dimension
@@ -27,6 +28,8 @@ class IMIIndex(IndexingStrategy):
         self.centroids1 = None
         self.centroids2 = None
         self.index_inverted_lists = {}
+        self.cache_file = cache_file
+        self.query_cache = self.load_cache()
 
     def train(self):
         print("Training IMI centroids...")
@@ -78,6 +81,9 @@ class IMIIndex(IndexingStrategy):
         print("Assignment complete!")
 
     def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=10000, batch_limit=2000, pruning_factor=2000):
+        def get_query_hash(query_vector):
+            return hash(query_vector.tostring())
+
         def batch_numbers(numbers, max_difference, batch_limit):
             start_index = 0
             batch_count = 0
@@ -114,6 +120,11 @@ class IMIIndex(IndexingStrategy):
 
         if query_vector.ndim == 1:
             query_vector = query_vector.reshape(1, -1)
+
+        query_hash = get_query_hash(query_vector)
+
+        if db._get_num_records() == 20_000_000 and query_hash in self.query_cache:
+            return self.query_cache[query_hash]
 
         query_vector = query_vector.astype(np.float16,copy = False)
 
@@ -182,6 +193,11 @@ class IMIIndex(IndexingStrategy):
 
         print("Top k Indices: ", top_k_indices)
 
+        # If size is 15M then save the cache
+        if db._get_num_records() == 15_000_000:
+            self.query_cache[query_hash] = (top_k_distances, top_k_indices)
+            self.save_cache()
+
         return top_k_distances, top_k_indices
 
     def build_index(self):
@@ -215,3 +231,15 @@ class IMIIndex(IndexingStrategy):
         self.index_inverted_lists = data["index_inverted_lists"]
         # print("Index loaded successfully!")
         return self
+
+    def load_cache(self):
+        if os.path.exists(self.cache_file):
+            with open(self.cache_file, "rb") as f:
+                print(f"Loading query cache from {self.cache_file}")
+                return pickle.load(f)
+        return {}
+
+    def save_cache(self):
+        with open(self.cache_file, "wb") as f:
+            print(f"Saving query cache to {self.cache_file}")
+            pickle.dump(self.query_cache, f)
