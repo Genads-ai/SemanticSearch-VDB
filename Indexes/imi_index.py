@@ -137,22 +137,11 @@ class IMIIndex(IndexingStrategy):
         # Find closest centroids in both subspaces
         subspace1_distances = cdist(query_subspace1, self.centroids1, metric="cosine").flatten()
         subspace2_distances = cdist(query_subspace2, self.centroids2, metric="cosine").flatten()
+        closest_clusters1 = np.argsort(subspace1_distances)[:nprobe]
+        closest_clusters2 = np.argsort(subspace2_distances)[:nprobe]
+        
+        cluster_pairs = list(itertools.product(closest_clusters1, closest_clusters2))
 
-        # Create a grid of combined distances using broadcasting
-        combined_distances = subspace1_distances[:, None] + subspace2_distances[None, :]
-
-        # Flatten combined distances and generate centroid pair indices
-        combined_distances_flat = combined_distances.ravel()
-        centroid_pairs = np.indices((256, 256)).reshape(2, -1).T
-
-        # Select the top nprobe * nprobe centroid pairs
-        top_indices = np.argpartition(combined_distances_flat, nprobe * nprobe)[:nprobe * nprobe]
-        top_indices = top_indices[np.argsort(combined_distances_flat[top_indices])]
-
-        # Use the top indices to extract cluster pairs
-        cluster_pairs = centroid_pairs[top_indices]
-
-        # Gather candidate vectors from pruned cluster pairs
         candidate_vectors = np.concatenate(
             [self.index_inverted_lists[tuple(pair)] for pair in cluster_pairs]
         )
