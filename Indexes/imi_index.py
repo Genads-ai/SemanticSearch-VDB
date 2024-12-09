@@ -102,10 +102,11 @@ class IMIIndex(IndexingStrategy):
         def process_batch(batch):
             start_index = batch[0]
             end_index = batch[-1]
-            block_data = db.get_sequential_block(start_index, end_index + 1).astype(np.float16,copy = False) 
+            block_data = db.get_sequential_block(start_index, end_index + 1)
 
             relevant_indices = batch - start_index
             block_data = block_data[relevant_indices]
+            block_data = block_data.astype(np.float16,copy = False) 
 
             # Compute cosine distances
             distances = cdist(query_vector, block_data, metric="cosine").flatten().astype(np.float16,copy = False)
