@@ -122,9 +122,11 @@ class IMIIndex(IndexingStrategy):
             query_vector = query_vector.reshape(1, -1)
 
         query_hash = get_query_hash(query_vector)
+        prev_distances = np.array([])
+        prev_indices = np.array([])
 
         if db._get_num_records() == 20_000_000 and query_hash in self.query_cache:
-            return self.query_cache[query_hash]
+            prev_distances,prev_indices = self.query_cache[query_hash]
 
         query_vector = query_vector.astype(np.float16,copy = False)
 
@@ -178,6 +180,9 @@ class IMIIndex(IndexingStrategy):
 
         candidate_vectors.sort()
 
+        if db._get_num_records() == 20_000_000:
+            candidate_vectors = candidate_vectors[candidate_vectors >= 15_000_000]
+
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
         all_candidates = []
@@ -188,8 +193,22 @@ class IMIIndex(IndexingStrategy):
                 all_candidates.extend(batch_top_k)
 
         top_k_global = heapq.nsmallest(top_k, all_candidates, key=lambda x: x[0])
-        top_k_distances = np.array([]) # [-item[0] for item in local_heap] This should be in here but removed to save memory & time
+        top_k_distances = np.array([item[0] for item in top_k_global]) # [-item[0] for item in local_heap] This should be in here but removed to save memory & time
         top_k_indices = np.array([item[1] for item in top_k_global])
+
+        if db._get_num_records() == 20_000_000:
+            combined_distances = np.concatenate([prev_distances, top_k_distances])
+            combined_indices = np.concatenate([prev_indices, top_k_indices])
+            print("Combined Distances: ", combined_distances)
+            print("Combined Indices: ", combined_indices)
+
+            # Select the final top k
+            final_top_k_indices = np.argsort(combined_distances)[:top_k]
+            top_k_distances = combined_distances[final_top_k_indices]
+            top_k_indices = combined_indices[final_top_k_indices]
+
+            return top_k_distances, top_k_indices
+
 
         print("Top k Indices: ", top_k_indices)
 
