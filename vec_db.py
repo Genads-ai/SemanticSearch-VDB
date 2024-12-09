@@ -33,7 +33,7 @@ class VecDB:
             if "ivf" in self.index_path:
                 self.index = self._build_index(ivf_adc_index.IVFADCIndex(vectors=self.get_all_rows(),nlist=256,dimension=70))
             else:
-                self.index = self._build_index(imi_index.IMIIndex(vectors=self.get_all_rows(),nlist=256,dimension=70)) 
+                self.index = self._build_index(imi_index.IMIIndex(vectors=self.get_all_rows(),nlist=256,dimension=70,index_path=index_file_path)) 
 
     def generate_database(self, size: int) -> None:
         rng = np.random.default_rng(DB_SEED_NUMBER)
@@ -42,7 +42,7 @@ class VecDB:
         if "ivf" in self.index_path:
             self.index = self._build_index(ivf_adc_index.IVFADCIndex(vectors=self.get_all_rows(),nlist=256,dimension=70))
         else:
-            self.index = self._build_index(imi_index.IMIIndex(vectors=self.get_all_rows(),nlist=256,dimension=70))
+            self.index = self._build_index(imi_index.IMIIndex(vectors=self.get_all_rows(),nlist=256,dimension=70,index_path=self.index_path))
     def _write_vectors_to_file(self, vectors: np.ndarray) -> None:
         mmap_vectors = np.memmap(self.db_path, dtype=np.float32, mode='w+', shape=vectors.shape)
         mmap_vectors[:] = vectors[:]

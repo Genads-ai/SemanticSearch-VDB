@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class IMIIndex(IndexingStrategy):
-    def __init__(self, vectors, nlist, dimension=70):
+    def __init__(self, vectors, nlist, dimension=70,index_path=None):
         assert dimension % 2 == 0, "Dimension must be divisible by 2 for IMI."
         self.nlist = nlist
         self.dimension = dimension
@@ -28,6 +28,7 @@ class IMIIndex(IndexingStrategy):
         self.centroids1 = None
         self.centroids2 = None
         self.index_inverted_lists = {}
+        self.index_path = index_path
 
     def train(self):
         print("Training IMI centroids...")
@@ -188,13 +189,13 @@ class IMIIndex(IndexingStrategy):
 
     def build_index(self):
         nq = self.vectors.shape[0]
-        if os.path.exists(f"DBIndexes/imi_index_{nq}"):
-            self.load_index(f"DBIndexes/imi_index_{nq}")
+        if os.path.exists(self.index_path):
+            self.load_index(self.index_path)
             return self
 
         self.train()
         self.add()
-        self.save_index(f"DBIndexes/imi_index_{nq}")
+        self.save_index(self.index_path)
         return self
 
     def save_index(self, path: str):
