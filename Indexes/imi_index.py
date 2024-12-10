@@ -169,7 +169,7 @@ class IMIIndex(IndexingStrategy):
         kept_indices = kept_indices[np.argsort(rep_distances[kept_indices])]  
         pruned_cluster_pairs = cluster_pairs[kept_indices]
         # ----------------------------
-        batch_size = 100  # Adjust batch size as needed
+        batch_size = 25
         candidate_vectors = []
 
         for batch_start in range(0, len(pruned_cluster_pairs), batch_size):
