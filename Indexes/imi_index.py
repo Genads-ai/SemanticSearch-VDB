@@ -16,6 +16,7 @@ import heapq
 import pickle
 from joblib import Parallel, delayed
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import h5py
 
 
 class IMIIndex(IndexingStrategy):
@@ -125,9 +126,13 @@ class IMIIndex(IndexingStrategy):
         query_subspace1 = query_vector[:, :self.subspace_dim]
         query_subspace2 = query_vector[:, self.subspace_dim:]
 
+        centroids = self.load_centroids()
+        centroids1 = centroids["centroids1"]
+        centroids2 = centroids["centroids2"]
+
         # Find closest centroids in both subspaces
-        subspace1_distances = cdist(query_subspace1, self.centroids1, metric="cosine").flatten()
-        subspace2_distances = cdist(query_subspace2, self.centroids2, metric="cosine").flatten()
+        subspace1_distances = cdist(query_subspace1, centroids1, metric="cosine").flatten()
+        subspace2_distances = cdist(query_subspace2, centroids2, metric="cosine").flatten()
 
         # Create a grid of combined distances using broadcasting
         combined_distances = subspace1_distances[:, None] + subspace2_distances[None, :]
@@ -150,8 +155,8 @@ class IMIIndex(IndexingStrategy):
         representative_vectors = np.empty((len(cluster_pairs), self.dimension), dtype=np.float16)
         for idx, pair in enumerate(cluster_pairs):
             representative_vectors[idx] = np.concatenate([
-                self.centroids1[pair[0]], 
-                self.centroids2[pair[1]]
+                centroids1[pair[0]], 
+                centroids2[pair[1]]
             ])
 
         # Compute distances to representative vectors for pruning
@@ -164,11 +169,27 @@ class IMIIndex(IndexingStrategy):
         kept_indices = kept_indices[np.argsort(rep_distances[kept_indices])]  
         pruned_cluster_pairs = cluster_pairs[kept_indices]
         # ----------------------------
-        # Gather candidate vectors from pruned cluster pairs
-        candidate_vectors = np.concatenate(
-            [self.index_inverted_lists[tuple(pair)] for pair in pruned_cluster_pairs]
-        )
+        batch_size = 100  # Adjust batch size as needed
+        candidate_vectors = []
 
+        for batch_start in range(0, len(pruned_cluster_pairs), batch_size):
+            batch_pairs = pruned_cluster_pairs[batch_start:batch_start + batch_size]
+
+            # Load the current batch of index inverted lists
+            index_inverted_lists = self.load_index_inverted_lists(batch_pairs)
+
+            # Gather candidate vectors for the current batch
+            batch_vectors = [
+                index_inverted_lists[tuple(pair)] for pair in batch_pairs if tuple(pair) in index_inverted_lists
+            ]
+            if batch_vectors:
+                candidate_vectors.extend(batch_vectors)
+
+        # Concatenate all candidate vectors
+        if candidate_vectors:
+            candidate_vectors = np.concatenate(candidate_vectors)
+        else:
+            candidate_vectors = np.array([])  # Handle case where no vectors are found
         candidate_vectors.sort()
 
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
@@ -190,7 +211,7 @@ class IMIIndex(IndexingStrategy):
     def build_index(self):
         nq = self.vectors.shape[0]
         if os.path.exists(self.index_path):
-            self.load_index(self.index_path)
+            # self.load_index(self.index_path)
             return self
 
         self.train()
@@ -218,3 +239,58 @@ class IMIIndex(IndexingStrategy):
         self.index_inverted_lists = data["index_inverted_lists"]
         # print("Index loaded successfully!")
         return self
+
+
+    def pickle_to_hdf5(pickle_path, hdf5_path):
+        # Step 1: Load the pickle file
+        with open(pickle_path, "rb") as f:
+            data = pickle.load(f)
+        
+        with h5py.File(hdf5_path, "w") as h5f:
+            # Store centroids1 and centroids2 as datasets
+            h5f.create_dataset("centroids1", data=data["centroids1"])
+            h5f.create_dataset("centroids2", data=data["centroids2"])
+            
+            # Store index_inverted_lists as a group
+            inverted_lists_group = h5f.create_group("index_inverted_lists")
+            for key, value in data["index_inverted_lists"].items():
+                key_str = ",".join(map(str, key))  # Convert tuple keys to strings
+                inverted_lists_group.create_dataset(key_str, data=np.array(value))
+        
+        print(f"Data successfully converted and saved to {hdf5_path}")
+
+
+    def load_centroids(self):
+        with h5py.File(self.index_path, "r") as h5f:
+            centroids1 = h5f["centroids1"][:]
+            centroids2 = h5f["centroids2"][:]
+        return {"centroids1": centroids1, "centroids2": centroids2}
+
+    def load_index_inverted_lists(self, keys=None):
+        inverted_lists = {}
+
+        with h5py.File(self.index_path, "r") as h5f:
+            if "index_inverted_lists" not in h5f:
+                return inverted_lists
+
+            if keys is not None:
+                for key in keys:
+                    key = tuple(key) if isinstance(key, (list, np.ndarray)) else key
+                    key_str = ",".join(map(str, key))
+                    if key_str in h5f["index_inverted_lists"]:
+                        inverted_lists[key] = h5f["index_inverted_lists"][key_str][:]
+                    else:
+                        print(f"Key {key} not found in index_inverted_lists.")
+            else:
+                inverted_lists = {
+                    tuple(map(int, key.split(","))): h5f["index_inverted_lists"][key][:]
+                    for key in h5f["index_inverted_lists"]
+                }
+        return inverted_lists
+
+if __name__ == "__main__":
+    # Step 1: Load the pickle file
+    pickle_path = "DBIndexes/imi_index_10000000"
+    hdf5_path = "DBIndexes/imi_index_10000000.h5"
+    IMIIndex.pickle_to_hdf5(pickle_path, hdf5_path)
+    print("Conversion complete!")
