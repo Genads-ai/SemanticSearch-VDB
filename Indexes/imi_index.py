@@ -168,29 +168,12 @@ class IMIIndex(IndexingStrategy):
         kept_indices = np.argpartition(rep_distances, keep_count)[:keep_count]
         kept_indices = kept_indices[np.argsort(rep_distances[kept_indices])]  
         pruned_cluster_pairs = cluster_pairs[kept_indices]
-        # ----------------------------  
+        # ----------------------------
 
-        # Construct candidate vectors from pruned cluster pairs
-        inverted_lists = self.load_index_inverted_lists(pruned_cluster_pairs)
-
-        inverted_list_num_elements = 0
-
-        for key in pruned_cluster_pairs:
-            key = tuple(key)
-            inverted_list_num_elements += len(inverted_lists[key])
-
-        # Instead of concatenating, process candidate vectors incrementally
-        candidate_vectors = np.empty((inverted_list_num_elements,), dtype=np.int32)
-
-        # Fill candidate vectors
-        start_index = 0
-        for key in pruned_cluster_pairs:
-            inverted_list = inverted_lists[tuple(key)]
-            end_index = start_index + len(inverted_list)
-            candidate_vectors[start_index:end_index] = inverted_list
-            start_index = end_index
-
+        candidate_vectors = self.load_index_inverted_lists(pruned_cluster_pairs)
+            
         candidate_vectors.sort()
+
 
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
@@ -284,30 +267,39 @@ class IMIIndex(IndexingStrategy):
             centroids_data = pickle.load(f)
         return {"centroids1": centroids_data["centroids1"], "centroids2": centroids_data["centroids2"]}
 
-
     def load_index_inverted_lists(self, keys=None):
-        inverted_lists = {}
         inverted_list_dir = os.path.join("DBIndexes", f"imi_index_{self.vectors.shape[0]//10**6}M")
         concatenated_values_path = os.path.join(inverted_list_dir, "concatenated_values.bin")
         index_file_path = os.path.join(inverted_list_dir, "index_offsets.bin")
 
+
         with open(index_file_path, "rb") as f:
             index_offsets = np.fromfile(f, dtype=np.int32).reshape(-1, 2)
 
+        total_length = 0
+        for key in keys:
+            key = tuple(key) if isinstance(key, (list, np.ndarray)) else key
+            index = key[0] * 256 + key[1]
+            start, length = index_offsets[index]
+            total_length += length
+
+        print(f"Total length: {total_length}")
+
+        candidate_vectors = np.empty((total_length,), dtype=np.int32)
+
+        concatenated_values = np.memmap(concatenated_values_path, dtype=np.int32, mode='r')
+
+        array_start = 0
         if keys is not None:
             for key in keys:
                 key = tuple(key) if isinstance(key, (list, np.ndarray)) else key
                 index = key[0] * 256 + key[1]
                 start, length = index_offsets[index]
-                if length > 0:
-                    offset = start * np.dtype(np.int32).itemsize
-                    inverted_lists[key] = np.memmap(concatenated_values_path, dtype=np.int32, mode='r', offset=offset, shape=(length,))
-                else:
-                    inverted_lists[key] = np.array([], dtype=np.int32)
+                candidate_vectors[array_start:array_start+length] = concatenated_values[start:start+length]
+                array_start += length
 
-        return inverted_lists
+        return candidate_vectors
 
-    
 if __name__ == "__main__":
     # Step 1: Load the pickle file
     pickle_path = "DBIndexes/imi_index_20000000"
