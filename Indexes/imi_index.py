@@ -266,7 +266,8 @@ class IMIIndex(IndexingStrategy):
         with open(centroids_path, "rb") as f:
             centroids_data = pickle.load(f)
         return {"centroids1": centroids_data["centroids1"], "centroids2": centroids_data["centroids2"]}
-    
+
+
     def load_index_inverted_lists(self, keys=None):
         inverted_list_dir = os.path.join("DBIndexes", f"imi_index_{self.vectors.shape[0]//10**6}M")
         concatenated_values_path = os.path.join(inverted_list_dir, "concatenated_values.bin")
@@ -276,6 +277,7 @@ class IMIIndex(IndexingStrategy):
             index_offsets = np.fromfile(f, dtype=np.int32).reshape(-1, 2)
 
         total_length = 0
+        keys = sorted(keys, key=lambda key: tuple(key) if isinstance(key, (list, np.ndarray)) else key)
         for key in keys:
             key = tuple(key) if isinstance(key, (list, np.ndarray)) else key
             index = key[0] * 256 + key[1]
@@ -284,45 +286,33 @@ class IMIIndex(IndexingStrategy):
 
         candidate_vectors = np.empty((total_length,), dtype=np.int32)
 
-        def batch_keys(keys, max_size):
-            start_index = 0
-            n = len(keys)
-            while start_index < n:
-                current_batch = []
-                current_size = 0
-                while start_index < n:
-                    key = tuple(keys[start_index]) if isinstance(keys[start_index], (list, np.ndarray)) else keys[start_index]
-                    index = key[0] * 256 + key[1]
-                    _, length = index_offsets[index]
-                    if current_size + length > max_size:
-                        break
-                    current_batch.append(keys[start_index])
-                    current_size += length
-                    start_index += 1
-                yield current_batch
+        def batch_keys(keys, batch_size=100):
+            for i in range(0, len(keys), batch_size):
+                yield keys[i:i+batch_size]
 
         array_start = 0
         if keys is not None:
-            for key_batch in batch_keys(keys, max_size=100000):  # Adjust max_size as needed
-                start_indices = []
-                lengths = []
+            for key_batch in batch_keys(keys):
+                batch_starts = []
+                batch_lengths = []
+
                 for key in key_batch:
                     key = tuple(key) if isinstance(key, (list, np.ndarray)) else key
                     index = key[0] * 256 + key[1]
                     start, length = index_offsets[index]
-                    start_indices.append(start)
-                    lengths.append(length)
+                    batch_starts.append(start)
+                    batch_lengths.append(length)
 
-                min_start = min(start_indices)
-                max_end = max(start + length for start, length in zip(start_indices, lengths))
+                min_start = min(batch_starts)
+                max_end = max(start + length for start, length in zip(batch_starts, batch_lengths))
+
                 block = np.memmap(concatenated_values_path, dtype=np.int32, mode='r', offset=min_start * 4, shape=(max_end - min_start,))
 
-                for start, length in zip(start_indices, lengths):
+                for start, length in zip(batch_starts, batch_lengths):
                     candidate_vectors[array_start:array_start+length] = block[start-min_start:start-min_start+length]
                     array_start += length
 
         return candidate_vectors
-
 
 if __name__ == "__main__":
     # Step 1: Load the pickle file
