@@ -199,6 +199,8 @@ class IMIIndex(IndexingStrategy):
             # self.load_index(self.index_path)
             return self
 
+        return self
+
         self.train()
         self.add()
         self.save_index(self.index_path)
