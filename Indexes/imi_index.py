@@ -1,7 +1,7 @@
 import numpy as np
 import os
 import sys
-from indexing_strategy import IndexingStrategy
+from .indexing_strategy import IndexingStrategy
 from sklearn.cluster import KMeans
 from scipy.spatial.distance import cdist
 import memory_profiler
