@@ -316,7 +316,35 @@ class IMIIndex(IndexingStrategy):
                     inverted_lists[key] = concatenated_values[start:start+length]
 
         return inverted_lists
+    
+    def load_index_inverted_lists(self, keys=None):
+        inverted_lists = {}
+        inverted_list_dir = os.path.join("DBIndexes", f"imi_index_{self.vectors.shape[0]//10**6}M")
+        concatenated_values_path = os.path.join(inverted_list_dir, "concatenated_values.bin")
+        index_file_path = os.path.join(inverted_list_dir, "index_offsets.bin")
 
+        with open(index_file_path, "rb") as f:
+            index_offsets = np.fromfile(f, dtype=np.int32).reshape(-1, 2)
+
+        concatenated_values = np.memmap(concatenated_values_path, dtype=np.int32, mode='r')
+
+        if keys is not None:
+            for key in keys:
+                key = tuple(key) if isinstance(key, (list, np.ndarray)) else key
+                index = key[0] * 256 + key[1]
+                start, length = index_offsets[index]
+                if length > 0:
+                    inverted_lists[key] = np.array(concatenated_values[start:start+length], copy=False)
+                else:
+                    inverted_lists[key] = np.array([], dtype=np.int32)
+        else:
+            for index in range(256 * 256):
+                start, length = index_offsets[index]
+                if length > 0:
+                    key = (index // 256, index % 256)
+                    inverted_lists[key] = np.array(concatenated_values[start:start+length], copy=False)
+
+        return inverted_lists
 if __name__ == "__main__":
     # Step 1: Load the pickle file
     pickle_path = "DBIndexes/imi_index_20000000"
