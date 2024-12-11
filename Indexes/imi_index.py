@@ -172,7 +172,7 @@ class IMIIndex(IndexingStrategy):
 
         candidate_vectors = []
 
-        inverted_lists = self.load_index_inverted_lists(pruned_cluster_pairs, batch_size=256)
+        inverted_lists = self.load_index_inverted_lists(pruned_cluster_pairs)
 
         for pair in pruned_cluster_pairs:
             inverted_list = inverted_lists[tuple(pair)]
@@ -278,36 +278,36 @@ class IMIIndex(IndexingStrategy):
             centroids_data = pickle.load(f)
         return {"centroids1": centroids_data["centroids1"], "centroids2": centroids_data["centroids2"]}
     
-    def load_index_inverted_lists(self, keys=None, batch_size=256):
+    def load_index_inverted_lists(self, keys=None):
         inverted_lists = {}
         inverted_list_dir = os.path.join("DBIndexes", f"imi_index_{self.vectors.shape[0]//10**6}M")
         concatenated_values_path = os.path.join(inverted_list_dir, "concatenated_values.bin")
         index_file_path = os.path.join(inverted_list_dir, "index_offsets.bin")
 
-        index_offsets = np.memmap(index_file_path, dtype=np.int32, mode='r').reshape(-1, 2)
+        with open(index_file_path, "rb") as f:
+            index_offsets = np.fromfile(f, dtype=np.int32).reshape(-1, 2)
+
         concatenated_values = np.memmap(concatenated_values_path, dtype=np.int32, mode='r')
 
         if keys is not None:
-            keys = sorted([tuple(key) if isinstance(key, (list, np.ndarray)) else key for key in keys], 
-                        key=lambda key: key[0] * 256 + key[1])
-            grouped_keys = [keys[i:i + batch_size] for i in range(0, len(keys), batch_size)]
-
-            for group in grouped_keys:
-                for key in group:
-                    index = key[0] * 256 + key[1]
-                    start, length = index_offsets[index]
-                    if length > 0:
-                        inverted_lists[key] = concatenated_values[start:start + length]
-                    else:
-                        inverted_lists[key] = []
+            for key in keys:
+                key = tuple(key) if isinstance(key, (list, np.ndarray)) else key
+                index = key[0] * 256 + key[1]
+                start, length = index_offsets[index]
+                if length > 0:
+                    inverted_lists[key] = concatenated_values[start:start+length]
+                else:
+                    inverted_lists[key] = []
         else:
             for index in range(256 * 256):
                 start, length = index_offsets[index]
                 if length > 0:
                     key = (index // 256, index % 256)
-                    inverted_lists[key] = concatenated_values[start:start + length]
+                    inverted_lists[key] = concatenated_values[start:start+length]
 
         return inverted_lists
+
+
 
 
 if __name__ == "__main__":
