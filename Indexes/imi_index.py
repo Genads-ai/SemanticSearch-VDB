@@ -1,7 +1,7 @@
 import numpy as np
 import os
 import sys
-from indexing_strategy import IndexingStrategy
+from .indexing_strategy import IndexingStrategy
 from sklearn.cluster import KMeans
 from scipy.spatial.distance import cdist
 import memory_profiler
@@ -316,7 +316,7 @@ class IMIIndex(IndexingStrategy):
                     inverted_lists[key] = concatenated_values[start:start+length]
 
         return inverted_lists
-        
+
 if __name__ == "__main__":
     # Step 1: Load the pickle file
     pickle_path = "DBIndexes/imi_index_20000000"
