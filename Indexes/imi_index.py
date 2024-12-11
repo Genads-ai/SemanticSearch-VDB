@@ -289,7 +289,7 @@ class IMIIndex(IndexingStrategy):
 
         candidate_vectors = np.empty((total_length,), dtype=np.int32)
 
-        def batch_keys(keys, batch_size=25):
+        def batch_keys(keys, batch_size=20):
             for i in range(0, len(keys), batch_size):
                 yield keys[i:i+batch_size]
 
