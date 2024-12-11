@@ -170,6 +170,7 @@ class IMIIndex(IndexingStrategy):
         pruned_cluster_pairs = cluster_pairs[kept_indices]
         # ----------------------------
 
+        # Construct candidate vectors from pruned cluster pairs
 
         inverted_lists = self.load_index_inverted_lists(pruned_cluster_pairs)
         candidate_vectors = np.concatenate([inverted_lists[tuple(pair)] for pair in pruned_cluster_pairs])
@@ -297,7 +298,7 @@ class IMIIndex(IndexingStrategy):
                     inverted_lists[key] = concatenated_values[start:start+length]
 
         return inverted_lists
-    
+            
     def load_index_inverted_lists(self, keys=None):
         inverted_lists = {}
         inverted_list_dir = os.path.join("DBIndexes", f"imi_index_{self.vectors.shape[0]//10**6}M")
@@ -307,21 +308,32 @@ class IMIIndex(IndexingStrategy):
         with open(index_file_path, "rb") as f:
             index_offsets = np.fromfile(f, dtype=np.int32).reshape(-1, 2)
 
-        concatenated_values = np.memmap(concatenated_values_path, dtype=np.int32, mode='r')
-
         if keys is not None:
             for key in keys:
                 key = tuple(key) if isinstance(key, (list, np.ndarray)) else key
                 index = key[0] * 256 + key[1]
                 start, length = index_offsets[index]
                 if length > 0:
-                    offset = start * concatenated_values.dtype.itemsize
-                    inverted_lists[key] = np.ndarray((length,), dtype=np.int32, buffer=concatenated_values, offset=offset)
+                    offset = start * np.dtype(np.int32).itemsize
+                    concatenated_values = np.memmap(concatenated_values_path, dtype=np.int32, mode='r', offset=offset, shape=(length,))
+                    inverted_lists[key] = concatenated_values
                 else:
                     inverted_lists[key] = np.array([], dtype=np.int32)
+        else:
+            for index in range(256 * 256):
+                start, length = index_offsets[index]
+                if length > 0:
+                    key = (index // 256, index % 256)
+                    offset = start * np.dtype(np.int32).itemsize
+                    concatenated_values = np.memmap(concatenated_values_path, dtype=np.int32, mode='r', offset=offset, shape=(length,))
+                    inverted_lists[key] = concatenated_values
+
+        # Delete the memmap object
+        del concatenated_values
 
         return inverted_lists
 
+    
 if __name__ == "__main__":
     # Step 1: Load the pickle file
     pickle_path = "DBIndexes/imi_index_20000000"
