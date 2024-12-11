@@ -171,21 +171,10 @@ class IMIIndex(IndexingStrategy):
         # ----------------------------
 
         # Construct candidate vectors from pruned cluster pairs
-        batch_size = 25
-        candidate_vectors = []
 
-        for batch_start in range(0, len(pruned_cluster_pairs), batch_size):
-            batch_pairs = pruned_cluster_pairs[batch_start:batch_start + batch_size]
+        inverted_lists = self.load_index_inverted_lists(pruned_cluster_pairs)
 
-            # Load the current batch of index inverted lists
-            index_inverted_lists = self.load_index_inverted_lists(batch_pairs)
-
-            # Gather candidate vectors for the current batch
-            batch_vectors = [
-                index_inverted_lists[tuple(pair)] for pair in batch_pairs if tuple(pair) in index_inverted_lists
-            ]
-            if batch_vectors:
-                candidate_vectors.extend(batch_vectors)
+        candidate_vectors = [inverted_lists[tuple(pair)] for pair in pruned_cluster_pairs]
 
         # Concatenate all candidate vectors
         if candidate_vectors:
