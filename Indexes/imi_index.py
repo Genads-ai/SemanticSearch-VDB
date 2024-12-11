@@ -1,7 +1,7 @@
 import numpy as np
 import os
 import sys
-from .indexing_strategy import IndexingStrategy
+from indexing_strategy import IndexingStrategy
 from sklearn.cluster import KMeans
 from scipy.spatial.distance import cdist
 import memory_profiler
@@ -192,6 +192,7 @@ class IMIIndex(IndexingStrategy):
             candidate_vectors = np.concatenate(candidate_vectors)
         else:
             candidate_vectors = np.array([])  # Handle case where no vectors are found
+            
         candidate_vectors.sort()
 
 
@@ -249,7 +250,6 @@ class IMIIndex(IndexingStrategy):
         with open(pickle_path, "rb") as f:
             data = pickle.load(f)
 
-        # Step 2: Save centroids1 and centroids2 to a single pickle file
         centroids_path = os.path.join(output_dir, f"centroids_{size//10**6}M.pkl")
         centroids_data = {"centroids1": data["centroids1"], "centroids2": data["centroids2"]}
         with open(centroids_path, "wb") as f:
@@ -259,14 +259,26 @@ class IMIIndex(IndexingStrategy):
         inverted_list_dir = os.path.join(output_dir, f"imi_index_{size//10**6}M")
         os.makedirs(inverted_list_dir, exist_ok=True)
 
-        # Step 4: Save each key-value pair in index_inverted_lists as a separate pickle file
-        for key, value in data["index_inverted_lists"].items():
-            key_str = ",".join(map(str, key))  # Convert tuple keys to strings
-            file_path = os.path.join(inverted_list_dir, f"{key_str}.pkl")
-            with open(file_path, "wb") as f:
-                pickle.dump(value, f)
+        concatenated_values = []
+        index_offsets = np.zeros((256 * 256, 2), dtype=np.int32)
 
-        print(f"Index inverted lists saved to {inverted_list_dir}")
+        for key, value in data["index_inverted_lists"].items():
+            start = len(concatenated_values)
+            length = len(value)
+            concatenated_values.extend(value)
+            index = key[0] * 256 + key[1]
+            index_offsets[index] = [start, length]
+
+        concatenated_values_path = os.path.join(inverted_list_dir, "concatenated_values.bin")
+        index_file_path = os.path.join(inverted_list_dir, "index_offsets.bin")
+
+        with open(concatenated_values_path, "wb") as f:
+            np.array(concatenated_values, dtype=np.int32).tofile(f)
+        print(f"Concatenated values saved to {concatenated_values_path}")
+
+        with open(index_file_path, "wb") as f:
+            index_offsets.tofile(f)
+        print(f"Index offsets saved to {index_file_path}")
 
 
 
@@ -276,34 +288,37 @@ class IMIIndex(IndexingStrategy):
             centroids_data = pickle.load(f)
         return {"centroids1": centroids_data["centroids1"], "centroids2": centroids_data["centroids2"]}
 
-
     def load_index_inverted_lists(self, keys=None):
         inverted_lists = {}
         inverted_list_dir = os.path.join("DBIndexes", f"imi_index_{self.vectors.shape[0]//10**6}M")
+        concatenated_values_path = os.path.join(inverted_list_dir, "concatenated_values.bin")
+        index_file_path = os.path.join(inverted_list_dir, "index_offsets.bin")
+
+        with open(index_file_path, "rb") as f:
+            index_offsets = np.fromfile(f, dtype=np.int32).reshape(-1, 2)
+
+        concatenated_values = np.memmap(concatenated_values_path, dtype=np.int32, mode='r')
 
         if keys is not None:
             for key in keys:
                 key = tuple(key) if isinstance(key, (list, np.ndarray)) else key
-                key_str = ",".join(map(str, key))
-                file_path = os.path.join(inverted_list_dir, f"{key_str}.pkl")
-                if os.path.exists(file_path):
-                    with open(file_path, "rb") as f:
-                        inverted_lists[key] = pickle.load(f)
+                index = key[0] * 256 + key[1]
+                start, length = index_offsets[index]
+                if length > 0:
+                    inverted_lists[key] = concatenated_values[start:start+length]
                 else:
-                    print(f"Key {key} not found in index inverted lists.")
+                    inverted_lists[key] = []
         else:
-            for file_name in os.listdir(inverted_list_dir):
-                if file_name.endswith(".pkl"):
-                    key_str = file_name[:-4]
-                    key = tuple(map(int, key_str.split(",")))
-                    file_path = os.path.join(inverted_list_dir, file_name)
-                    with open(file_path, "rb") as f:
-                        inverted_lists[key] = pickle.load(f)
+            for index in range(256 * 256):
+                start, length = index_offsets[index]
+                if length > 0:
+                    key = (index // 256, index % 256)
+                    inverted_lists[key] = concatenated_values[start:start+length]
 
         return inverted_lists
-
+        
 if __name__ == "__main__":
     # Step 1: Load the pickle file
     pickle_path = "DBIndexes/imi_index_20000000"
-    hdf5_path = "DBIndexes/"
+    hdf5_path = "DBIndexes"
     IMIIndex.restructure_pickle(pickle_path, hdf5_path, 20000000)
