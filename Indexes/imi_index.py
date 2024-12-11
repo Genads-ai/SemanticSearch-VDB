@@ -270,35 +270,7 @@ class IMIIndex(IndexingStrategy):
             centroids_data = pickle.load(f)
         return {"centroids1": centroids_data["centroids1"], "centroids2": centroids_data["centroids2"]}
 
-    def load_index_inverted_lists(self, keys=None):
-        inverted_lists = {}
-        inverted_list_dir = os.path.join("DBIndexes", f"imi_index_{self.vectors.shape[0]//10**6}M")
-        concatenated_values_path = os.path.join(inverted_list_dir, "concatenated_values.bin")
-        index_file_path = os.path.join(inverted_list_dir, "index_offsets.bin")
 
-        with open(index_file_path, "rb") as f:
-            index_offsets = np.fromfile(f, dtype=np.int32).reshape(-1, 2)
-
-        concatenated_values = np.memmap(concatenated_values_path, dtype=np.int32, mode='r')
-
-        if keys is not None:
-            for key in keys:
-                key = tuple(key) if isinstance(key, (list, np.ndarray)) else key
-                index = key[0] * 256 + key[1]
-                start, length = index_offsets[index]
-                if length > 0:
-                    inverted_lists[key] = concatenated_values[start:start+length]
-                else:
-                    inverted_lists[key] = []
-        else:
-            for index in range(256 * 256):
-                start, length = index_offsets[index]
-                if length > 0:
-                    key = (index // 256, index % 256)
-                    inverted_lists[key] = concatenated_values[start:start+length]
-
-        return inverted_lists
-            
     def load_index_inverted_lists(self, keys=None):
         inverted_lists = {}
         inverted_list_dir = os.path.join("DBIndexes", f"imi_index_{self.vectors.shape[0]//10**6}M")
@@ -319,18 +291,7 @@ class IMIIndex(IndexingStrategy):
                     inverted_lists[key] = concatenated_values
                 else:
                     inverted_lists[key] = np.array([], dtype=np.int32)
-        else:
-            for index in range(256 * 256):
-                start, length = index_offsets[index]
-                if length > 0:
-                    key = (index // 256, index % 256)
-                    offset = start * np.dtype(np.int32).itemsize
-                    concatenated_values = np.memmap(concatenated_values_path, dtype=np.int32, mode='r', offset=offset, shape=(length,))
-                    inverted_lists[key] = concatenated_values
-
-        # Delete the memmap object
-        del concatenated_values
-
+                    
         return inverted_lists
 
     
