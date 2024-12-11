@@ -171,12 +171,18 @@ class IMIIndex(IndexingStrategy):
         # ----------------------------
 
         # Construct candidate vectors from pruned cluster pairs
-
         inverted_lists = self.load_index_inverted_lists(pruned_cluster_pairs)
-        candidate_vectors = np.concatenate([inverted_lists[tuple(pair)] for pair in pruned_cluster_pairs])
+
+        # Instead of concatenating, process candidate vectors incrementally
+        candidate_vectors = []
+        for pair in pruned_cluster_pairs:
+            if tuple(pair) in inverted_lists and inverted_lists[tuple(pair)] is not None:
+                candidate_vectors.extend(inverted_lists[tuple(pair)])
+
+        # Convert to numpy array
+        candidate_vectors = np.array(candidate_vectors, dtype=np.int32, copy = False)
 
         candidate_vectors.sort()
-
 
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
@@ -291,7 +297,7 @@ class IMIIndex(IndexingStrategy):
                     inverted_lists[key] = concatenated_values
                 else:
                     inverted_lists[key] = np.array([], dtype=np.int32)
-                    
+
         return inverted_lists
 
     
