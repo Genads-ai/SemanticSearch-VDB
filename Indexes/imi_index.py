@@ -169,27 +169,12 @@ class IMIIndex(IndexingStrategy):
         kept_indices = kept_indices[np.argsort(rep_distances[kept_indices])]  
         pruned_cluster_pairs = cluster_pairs[kept_indices]
         # ----------------------------
-        batch_size = 200
-        candidate_vectors = []
 
-        for batch_start in range(0, len(pruned_cluster_pairs), batch_size):
-            batch_pairs = pruned_cluster_pairs[batch_start:batch_start + batch_size]
+        # Construct candidate vectors from pruned cluster pairs
+        index_inverted_lists = self.load_index_inverted_lists(pruned_cluster_pairs)
+        
+        candidate_vectors = np.concatenate([index_inverted_lists[(i, j)] for i, j in pruned_cluster_pairs])
 
-            # Load the current batch of index inverted lists
-            index_inverted_lists = self.load_index_inverted_lists(batch_pairs)
-
-            # Gather candidate vectors for the current batch
-            batch_vectors = [
-                index_inverted_lists[tuple(pair)] for pair in batch_pairs if tuple(pair) in index_inverted_lists
-            ]
-            if batch_vectors:
-                candidate_vectors.extend(batch_vectors)
-
-        # Concatenate all candidate vectors
-        if candidate_vectors:
-            candidate_vectors = np.concatenate(candidate_vectors)
-        else:
-            candidate_vectors = np.array([])  # Handle case where no vectors are found
         candidate_vectors.sort()
 
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
@@ -240,57 +225,65 @@ class IMIIndex(IndexingStrategy):
         # print("Index loaded successfully!")
         return self
 
-
-    def pickle_to_hdf5(pickle_path, hdf5_path):
-        # Step 1: Load the pickle file
+    def restructure_pickle(pickle_path, output_dir, size):
         with open(pickle_path, "rb") as f:
             data = pickle.load(f)
-        
-        with h5py.File(hdf5_path, "w") as h5f:
-            # Store centroids1 and centroids2 as datasets
-            h5f.create_dataset("centroids1", data=data["centroids1"])
-            h5f.create_dataset("centroids2", data=data["centroids2"])
-            
-            # Store index_inverted_lists as a group
-            inverted_lists_group = h5f.create_group("index_inverted_lists")
-            for key, value in data["index_inverted_lists"].items():
-                key_str = ",".join(map(str, key))  # Convert tuple keys to strings
-                inverted_lists_group.create_dataset(key_str, data=np.array(value))
-        
-        print(f"Data successfully converted and saved to {hdf5_path}")
+
+        # Step 2: Save centroids1 and centroids2 to a single pickle file
+        centroids_path = os.path.join(output_dir, f"centroids_{size//10**6}M.pkl")
+        centroids_data = {"centroids1": data["centroids1"], "centroids2": data["centroids2"]}
+        with open(centroids_path, "wb") as f:
+            pickle.dump(centroids_data, f)
+        print(f"Centroids saved to {centroids_path}")
+
+        inverted_list_dir = os.path.join(output_dir, f"imi_index_{size//10**6}M")
+        os.makedirs(inverted_list_dir, exist_ok=True)
+
+        # Step 4: Save each key-value pair in index_inverted_lists as a separate pickle file
+        for key, value in data["index_inverted_lists"].items():
+            key_str = ",".join(map(str, key))  # Convert tuple keys to strings
+            file_path = os.path.join(inverted_list_dir, f"{key_str}.pkl")
+            with open(file_path, "wb") as f:
+                pickle.dump(value, f)
+
+        print(f"Index inverted lists saved to {inverted_list_dir}")
+
 
 
     def load_centroids(self):
-        with h5py.File(self.index_path, "r") as h5f:
-            centroids1 = h5f["centroids1"][:]
-            centroids2 = h5f["centroids2"][:]
-        return {"centroids1": centroids1, "centroids2": centroids2}
+        centroids_path = os.path.join("DBIndexes", f"centroids_{self.vectors.shape[0]//10**6}M.pkl")
+        with open(centroids_path, "rb") as f:
+            centroids_data = pickle.load(f)
+        return {"centroids1": centroids_data["centroids1"], "centroids2": centroids_data["centroids2"]}
+
 
     def load_index_inverted_lists(self, keys=None):
         inverted_lists = {}
+        inverted_list_dir = os.path.join("DBIndexes", f"imi_index_{self.vectors.shape[0]//10**6}M")
 
-        with h5py.File(self.index_path, "r") as h5f:
-            if "index_inverted_lists" not in h5f:
-                return inverted_lists
+        if keys is not None:
+            for key in keys:
+                key = tuple(key) if isinstance(key, (list, np.ndarray)) else key
+                key_str = ",".join(map(str, key))
+                file_path = os.path.join(inverted_list_dir, f"{key_str}.pkl")
+                if os.path.exists(file_path):
+                    with open(file_path, "rb") as f:
+                        inverted_lists[key] = pickle.load(f)
+                else:
+                    print(f"Key {key} not found in index inverted lists.")
+        else:
+            for file_name in os.listdir(inverted_list_dir):
+                if file_name.endswith(".pkl"):
+                    key_str = file_name[:-4]
+                    key = tuple(map(int, key_str.split(",")))
+                    file_path = os.path.join(inverted_list_dir, file_name)
+                    with open(file_path, "rb") as f:
+                        inverted_lists[key] = pickle.load(f)
 
-            if keys is not None:
-                for key in keys:
-                    key = tuple(key) if isinstance(key, (list, np.ndarray)) else key
-                    key_str = ",".join(map(str, key))
-                    if key_str in h5f["index_inverted_lists"]:
-                        inverted_lists[key] = h5f["index_inverted_lists"][key_str][:]
-                    else:
-                        print(f"Key {key} not found in index_inverted_lists.")
-            else:
-                inverted_lists = {
-                    tuple(map(int, key.split(","))): h5f["index_inverted_lists"][key][:]
-                    for key in h5f["index_inverted_lists"]
-                }
         return inverted_lists
 
 if __name__ == "__main__":
     # Step 1: Load the pickle file
-    pickle_path = "DBIndexes/imi_index_10000000"
-    hdf5_path = "DBIndexes/imi_index_10000000.h5"
-    IMIIndex.pickle_to_hdf5(pickle_path, hdf5_path)
-    print("Conversion complete!")
+    pickle_path = "DBIndexes/imi_index_20000000"
+    hdf5_path = "DBIndexes/"
+    IMIIndex.restructure_pickle(pickle_path, hdf5_path, 20000000)
