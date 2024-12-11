@@ -277,15 +277,15 @@ class IMIIndex(IndexingStrategy):
         with open(centroids_path, "rb") as f:
             centroids_data = pickle.load(f)
         return {"centroids1": centroids_data["centroids1"], "centroids2": centroids_data["centroids2"]}
-
+    
     def load_index_inverted_lists(self, keys=None, batch_size=256):
         inverted_lists = {}
         inverted_list_dir = os.path.join("DBIndexes", f"imi_index_{self.vectors.shape[0]//10**6}M")
         concatenated_values_path = os.path.join(inverted_list_dir, "concatenated_values.bin")
         index_file_path = os.path.join(inverted_list_dir, "index_offsets.bin")
 
-        with open(index_file_path, "rb") as f:
-            index_offsets = np.fromfile(f, dtype=np.int32).reshape(-1, 2)
+        index_offsets = np.memmap(index_file_path, dtype=np.int32, mode='r').reshape(-1, 2)
+        concatenated_values = np.memmap(concatenated_values_path, dtype=np.int32, mode='r')
 
         if keys is not None:
             keys = sorted([tuple(key) if isinstance(key, (list, np.ndarray)) else key for key in keys], 
@@ -293,32 +293,19 @@ class IMIIndex(IndexingStrategy):
             grouped_keys = [keys[i:i + batch_size] for i in range(0, len(keys), batch_size)]
 
             for group in grouped_keys:
-                first_key = group[0]
-                last_key = group[-1]
-
-                first_index = first_key[0] * 256 + first_key[1]
-                last_index = last_key[0] * 256 + last_key[1]
-
-                start = index_offsets[first_index, 0]
-                end = index_offsets[last_index, 0] + index_offsets[last_index, 1]
-
-                with open(concatenated_values_path, "rb") as f:
-                    f.seek(start * 4)
-                    batch_data = np.frombuffer(f.read((end - start) * 4), dtype=np.int32)
-
                 for key in group:
                     index = key[0] * 256 + key[1]
-                    key_start, length = index_offsets[index]
-                    offset = key_start - start
-                    inverted_lists[key] = batch_data[offset:offset + length]
+                    start, length = index_offsets[index]
+                    if length > 0:
+                        inverted_lists[key] = concatenated_values[start:start + length]
+                    else:
+                        inverted_lists[key] = []
         else:
             for index in range(256 * 256):
                 start, length = index_offsets[index]
                 if length > 0:
                     key = (index // 256, index % 256)
-                    with open(concatenated_values_path, "rb") as f:
-                        f.seek(start * 4)
-                        inverted_lists[key] = np.frombuffer(f.read(length * 4), dtype=np.int32)
+                    inverted_lists[key] = concatenated_values[start:start + length]
 
         return inverted_lists
 
