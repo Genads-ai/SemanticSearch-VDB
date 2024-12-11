@@ -30,6 +30,11 @@ class IMIIndex(IndexingStrategy):
         self.centroids2 = None
         self.index_inverted_lists = {}
         self.index_path = index_path
+        self.index_offsets = None
+        inverted_list_dir = os.path.join("DBIndexes", f"imi_index_{self.vectors.shape[0]//10**6}M")
+        index_file_path = os.path.join(inverted_list_dir, "index_offsets.bin")
+        with open(index_file_path, "rb") as f:
+            self.index_offsets = np.fromfile(f, dtype=np.int32).reshape(-1, 2)
 
     def train(self):
         print("Training IMI centroids...")
@@ -271,22 +276,20 @@ class IMIIndex(IndexingStrategy):
     def load_index_inverted_lists(self, keys=None):
         inverted_list_dir = os.path.join("DBIndexes", f"imi_index_{self.vectors.shape[0]//10**6}M")
         concatenated_values_path = os.path.join(inverted_list_dir, "concatenated_values.bin")
-        index_file_path = os.path.join(inverted_list_dir, "index_offsets.bin")
 
-        with open(index_file_path, "rb") as f:
-            index_offsets = np.fromfile(f, dtype=np.int32).reshape(-1, 2)
+
 
         total_length = 0
         keys = sorted(keys, key=lambda key: tuple(key) if isinstance(key, (list, np.ndarray)) else key)
         for key in keys:
             key = tuple(key) if isinstance(key, (list, np.ndarray)) else key
             index = key[0] * 256 + key[1]
-            start, length = index_offsets[index]
+            start, length = self.index_offsets[index]
             total_length += length
 
         candidate_vectors = np.empty((total_length,), dtype=np.int32)
 
-        def batch_keys(keys, batch_size=20):
+        def batch_keys(keys, batch_size=25):
             for i in range(0, len(keys), batch_size):
                 yield keys[i:i+batch_size]
 
@@ -299,7 +302,7 @@ class IMIIndex(IndexingStrategy):
                 for key in key_batch:
                     key = tuple(key) if isinstance(key, (list, np.ndarray)) else key
                     index = key[0] * 256 + key[1]
-                    start, length = index_offsets[index]
+                    start, length = self.index_offsets[index]
                     batch_starts.append(start)
                     batch_lengths.append(length)
 
