@@ -17,6 +17,7 @@ import pickle
 from joblib import Parallel, delayed
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import h5py
+import gc
 
 
 class IMIIndex(IndexingStrategy):
@@ -183,6 +184,9 @@ class IMIIndex(IndexingStrategy):
             candidate_vectors = np.array([])  # Handle case where no vectors are found
             
         candidate_vectors.sort()
+
+        del inverted_lists
+        gc.collect()
 
 
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
