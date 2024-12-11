@@ -297,15 +297,15 @@ class IMIIndex(IndexingStrategy):
         with open(index_file_path, "rb") as f:
             index_offsets = np.fromfile(f, dtype=np.int32).reshape(-1, 2)
 
-        concatenated_values = np.memmap(concatenated_values_path, dtype=np.int32, mode='r')
-
         if keys is not None:
             for key in keys:
                 key = tuple(key) if isinstance(key, (list, np.ndarray)) else key
                 index = key[0] * 256 + key[1]
                 start, length = index_offsets[index]
                 if length > 0:
-                    inverted_lists[key] = concatenated_values[start:start+length]
+                    with open(concatenated_values_path, "rb") as f:
+                        f.seek(start * 4)
+                        inverted_lists[key] = np.frombuffer(f.read(length * 4), dtype=np.int32)
                 else:
                     inverted_lists[key] = []
         else:
@@ -313,7 +313,9 @@ class IMIIndex(IndexingStrategy):
                 start, length = index_offsets[index]
                 if length > 0:
                     key = (index // 256, index % 256)
-                    inverted_lists[key] = concatenated_values[start:start+length]
+                    with open(concatenated_values_path, "rb") as f:
+                        f.seek(start * 4)
+                        inverted_lists[key] = np.frombuffer(f.read(length * 4), dtype=np.int32)
 
         return inverted_lists
 
