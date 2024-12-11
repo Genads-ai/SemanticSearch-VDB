@@ -170,22 +170,13 @@ class IMIIndex(IndexingStrategy):
         pruned_cluster_pairs = cluster_pairs[kept_indices]
         # ----------------------------
 
-        # Construct candidate vectors from pruned cluster pairs
-        batch_size = 25
         candidate_vectors = []
 
-        for batch_start in range(0, len(pruned_cluster_pairs), batch_size):
-            batch_pairs = pruned_cluster_pairs[batch_start:batch_start + batch_size]
+        inverted_lists = self.load_index_inverted_lists(pruned_cluster_pairs, batch_size=256)
 
-            # Load the current batch of index inverted lists
-            index_inverted_lists = self.load_index_inverted_lists(batch_pairs)
-
-            # Gather candidate vectors for the current batch
-            batch_vectors = [
-                index_inverted_lists[tuple(pair)] for pair in batch_pairs if tuple(pair) in index_inverted_lists
-            ]
-            if batch_vectors:
-                candidate_vectors.extend(batch_vectors)
+        for pair in pruned_cluster_pairs:
+            inverted_list = inverted_lists[tuple(pair)]
+            candidate_vectors.append(inverted_list)
 
         # Concatenate all candidate vectors
         if candidate_vectors:
@@ -194,7 +185,6 @@ class IMIIndex(IndexingStrategy):
             candidate_vectors = np.array([])  # Handle case where no vectors are found
             
         candidate_vectors.sort()
-
 
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
@@ -287,7 +277,7 @@ class IMIIndex(IndexingStrategy):
         with open(centroids_path, "rb") as f:
             centroids_data = pickle.load(f)
         return {"centroids1": centroids_data["centroids1"], "centroids2": centroids_data["centroids2"]}
-        
+
     def load_index_inverted_lists(self, keys=None, batch_size=256):
         inverted_lists = {}
         inverted_list_dir = os.path.join("DBIndexes", f"imi_index_{self.vectors.shape[0]//10**6}M")
