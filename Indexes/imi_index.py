@@ -315,11 +315,13 @@ class IMIIndex(IndexingStrategy):
                 index = key[0] * 256 + key[1]
                 start, length = index_offsets[index]
                 if length > 0:
-                    inverted_lists[key] = np.array(concatenated_values[start:start+length], copy=False)
+                    offset = start * concatenated_values.dtype.itemsize
+                    inverted_lists[key] = np.ndarray((length,), dtype=np.int32, buffer=concatenated_values, offset=offset)
                 else:
                     inverted_lists[key] = np.array([], dtype=np.int32)
 
         return inverted_lists
+
 if __name__ == "__main__":
     # Step 1: Load the pickle file
     pickle_path = "DBIndexes/imi_index_20000000"
