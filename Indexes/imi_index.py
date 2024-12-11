@@ -170,29 +170,10 @@ class IMIIndex(IndexingStrategy):
         pruned_cluster_pairs = cluster_pairs[kept_indices]
         # ----------------------------
 
-        # Construct candidate vectors from pruned cluster pairs
-        batch_size = 25
-        candidate_vectors = []
 
-        for batch_start in range(0, len(pruned_cluster_pairs), batch_size):
-            batch_pairs = pruned_cluster_pairs[batch_start:batch_start + batch_size]
+        inverted_lists = self.load_index_inverted_lists(pruned_cluster_pairs)
+        candidate_vectors = np.concatenate([inverted_lists[tuple(pair)] for pair in pruned_cluster_pairs])
 
-            # Load the current batch of index inverted lists
-            index_inverted_lists = self.load_index_inverted_lists(batch_pairs)
-
-            # Gather candidate vectors for the current batch
-            batch_vectors = [
-                index_inverted_lists[tuple(pair)] for pair in batch_pairs if tuple(pair) in index_inverted_lists
-            ]
-            if batch_vectors:
-                candidate_vectors.extend(batch_vectors)
-
-        # Concatenate all candidate vectors
-        if candidate_vectors:
-            candidate_vectors = np.concatenate(candidate_vectors)
-        else:
-            candidate_vectors = np.array([])  # Handle case where no vectors are found
-            
         candidate_vectors.sort()
 
 
@@ -337,12 +318,6 @@ class IMIIndex(IndexingStrategy):
                     inverted_lists[key] = np.array(concatenated_values[start:start+length], copy=False)
                 else:
                     inverted_lists[key] = np.array([], dtype=np.int32)
-        else:
-            for index in range(256 * 256):
-                start, length = index_offsets[index]
-                if length > 0:
-                    key = (index // 256, index % 256)
-                    inverted_lists[key] = np.array(concatenated_values[start:start+length], copy=False)
 
         return inverted_lists
 if __name__ == "__main__":
