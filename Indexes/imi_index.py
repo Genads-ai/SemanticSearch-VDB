@@ -168,19 +168,16 @@ class IMIIndex(IndexingStrategy):
         kept_indices = np.argpartition(rep_distances, keep_count)[:keep_count]
         kept_indices = kept_indices[np.argsort(rep_distances[kept_indices])]  
         pruned_cluster_pairs = cluster_pairs[kept_indices]
-        # ----------------------------
+        # ----------------------------  
 
         # Construct candidate vectors from pruned cluster pairs
         inverted_lists = self.load_index_inverted_lists(pruned_cluster_pairs)
 
         # Instead of concatenating, process candidate vectors incrementally
-        candidate_vectors = []
+        candidate_vectors = np.empty(0, dtype=np.int32)
         for pair in pruned_cluster_pairs:
             if tuple(pair) in inverted_lists and inverted_lists[tuple(pair)] is not None:
-                candidate_vectors.extend(inverted_lists[tuple(pair)])
-
-        # Convert to numpy array
-        candidate_vectors = np.array(candidate_vectors, dtype=np.int32, copy = False)
+                candidate_vectors = np.concatenate([candidate_vectors, inverted_lists[tuple(pair)]])
 
         candidate_vectors.sort()
 
@@ -294,9 +291,11 @@ class IMIIndex(IndexingStrategy):
                 if length > 0:
                     offset = start * np.dtype(np.int32).itemsize
                     concatenated_values = np.memmap(concatenated_values_path, dtype=np.int32, mode='r', offset=offset, shape=(length,))
-                    inverted_lists[key] = concatenated_values
+                    inverted_lists[key] = np.asarray(concatenated_values, dtype=np.int32)
                 else:
                     inverted_lists[key] = np.array([], dtype=np.int32)
+
+
 
         return inverted_lists
 
