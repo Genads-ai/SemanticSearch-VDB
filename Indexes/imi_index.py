@@ -287,7 +287,6 @@ class IMIIndex(IndexingStrategy):
 
         candidate_vectors = np.empty((total_length,), dtype=np.int32)
 
-        concatenated_values = np.memmap(concatenated_values_path, dtype=np.int32, mode='r')
 
         array_start = 0
         if keys is not None:
@@ -295,7 +294,7 @@ class IMIIndex(IndexingStrategy):
                 key = tuple(key) if isinstance(key, (list, np.ndarray)) else key
                 index = key[0] * 256 + key[1]
                 start, length = index_offsets[index]
-                candidate_vectors[array_start:array_start+length] = concatenated_values[start:start+length]
+                candidate_vectors[array_start:array_start+length] = np.memmap(concatenated_values_path, dtype=np.int32, mode='r', offset = start*4, shape = (length,))
                 array_start += length
 
         return candidate_vectors
