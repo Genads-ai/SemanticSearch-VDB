@@ -171,9 +171,10 @@ class IMIIndex(IndexingStrategy):
         # ----------------------------
 
         # Construct candidate vectors from pruned cluster pairs
-        index_inverted_lists = self.load_index_inverted_lists(pruned_cluster_pairs)
-        
-        candidate_vectors = np.concatenate([index_inverted_lists[(i, j)] for i, j in pruned_cluster_pairs])
+        candidate_vectors = []
+        for i, j in pruned_cluster_pairs:
+            if (i, j) in self.index_inverted_lists:
+                candidate_vectors.extend(self.index_inverted_lists[(i, j)])
 
         candidate_vectors.sort()
 
