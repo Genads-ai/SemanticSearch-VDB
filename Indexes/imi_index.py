@@ -178,7 +178,7 @@ class IMIIndex(IndexingStrategy):
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
 
         all_candidates = []
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        with ThreadPoolExecutor(max_workers=1) as executor:
             future_to_batch = {executor.submit(process_batch, batch): batch for batch in batch_generator}
             for future in as_completed(future_to_batch):
                 batch_top_k = future.result()
@@ -286,7 +286,6 @@ class IMIIndex(IndexingStrategy):
         print(f"Total length: {total_length}")
 
         candidate_vectors = np.empty((total_length,), dtype=np.int32)
-
 
         array_start = 0
         if keys is not None:
