@@ -17,7 +17,6 @@ import pickle
 from joblib import Parallel, delayed
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import h5py
-import gc
 
 
 class IMIIndex(IndexingStrategy):
@@ -172,10 +171,21 @@ class IMIIndex(IndexingStrategy):
         # ----------------------------
 
         # Construct candidate vectors from pruned cluster pairs
+        batch_size = 25
+        candidate_vectors = []
 
-        inverted_lists = self.load_index_inverted_lists(pruned_cluster_pairs)
+        for batch_start in range(0, len(pruned_cluster_pairs), batch_size):
+            batch_pairs = pruned_cluster_pairs[batch_start:batch_start + batch_size]
 
-        candidate_vectors = [inverted_lists[tuple(pair)] for pair in pruned_cluster_pairs]
+            # Load the current batch of index inverted lists
+            index_inverted_lists = self.load_index_inverted_lists(batch_pairs)
+
+            # Gather candidate vectors for the current batch
+            batch_vectors = [
+                index_inverted_lists[tuple(pair)] for pair in batch_pairs if tuple(pair) in index_inverted_lists
+            ]
+            if batch_vectors:
+                candidate_vectors.extend(batch_vectors)
 
         # Concatenate all candidate vectors
         if candidate_vectors:
@@ -184,9 +194,6 @@ class IMIIndex(IndexingStrategy):
             candidate_vectors = np.array([])  # Handle case where no vectors are found
             
         candidate_vectors.sort()
-
-        del inverted_lists
-        gc.collect()
 
 
         batch_generator = batch_numbers(candidate_vectors, max_difference, batch_limit)
@@ -309,7 +316,7 @@ class IMIIndex(IndexingStrategy):
                     inverted_lists[key] = concatenated_values[start:start+length]
 
         return inverted_lists
-        
+
 if __name__ == "__main__":
     # Step 1: Load the pickle file
     pickle_path = "DBIndexes/imi_index_20000000"
