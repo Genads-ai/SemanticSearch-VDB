@@ -170,13 +170,21 @@ class IMIIndex(IndexingStrategy):
         pruned_cluster_pairs = cluster_pairs[kept_indices]
         # ----------------------------
 
+        batch_size = 25
         candidate_vectors = []
 
-        inverted_lists = self.load_index_inverted_lists(pruned_cluster_pairs)
+        for batch_start in range(0, len(pruned_cluster_pairs), batch_size):
+            batch_pairs = pruned_cluster_pairs[batch_start:batch_start + batch_size]
 
-        for pair in pruned_cluster_pairs:
-            inverted_list = inverted_lists[tuple(pair)]
-            candidate_vectors.append(inverted_list)
+            # Load the current batch of index inverted lists
+            index_inverted_lists = self.load_index_inverted_lists(batch_pairs)
+
+            # Gather candidate vectors for the current batch
+            batch_vectors = [
+                index_inverted_lists[tuple(pair)] for pair in batch_pairs if tuple(pair) in index_inverted_lists
+            ]
+            if batch_vectors:
+                candidate_vectors.extend(batch_vectors)
 
         # Concatenate all candidate vectors
         if candidate_vectors:
@@ -306,6 +314,7 @@ class IMIIndex(IndexingStrategy):
                     inverted_lists[key] = concatenated_values[start:start+length]
 
         return inverted_lists
+
 
 
 
