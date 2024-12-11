@@ -1,7 +1,7 @@
 import numpy as np
 import os
 import sys
-from .indexing_strategy import IndexingStrategy
+from indexing_strategy import IndexingStrategy
 from sklearn.cluster import KMeans
 from scipy.spatial.distance import cdist
 import memory_profiler
@@ -169,7 +169,7 @@ class IMIIndex(IndexingStrategy):
         kept_indices = kept_indices[np.argsort(rep_distances[kept_indices])]  
         pruned_cluster_pairs = cluster_pairs[kept_indices]
         # ----------------------------
-        batch_size = 25
+        batch_size = 200
         candidate_vectors = []
 
         for batch_start in range(0, len(pruned_cluster_pairs), batch_size):
