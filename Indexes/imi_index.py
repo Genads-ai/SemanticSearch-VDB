@@ -6,31 +6,27 @@ from sklearn.cluster import KMeans
 from scipy.spatial.distance import cdist
 import memory_profiler
 import timeit
-import tempfile
-import itertools
-
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from utilities import compute_recall_at_k
 from Quantizers.product_quantizer import ProductQuantizer 
 import heapq
 import pickle
-from joblib import Parallel, delayed
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import h5py
 
 
 class IMIIndex(IndexingStrategy):
     def __init__(self, vectors, nlist, dimension=70,index_path=None):
         assert dimension % 2 == 0, "Dimension must be divisible by 2 for IMI."
-        self.nlist = nlist
-        self.dimension = dimension
-        self.subspace_dim = dimension // 2
-        self.vectors = vectors
-        self.centroids1 = None
-        self.centroids2 = None
-        self.index_inverted_lists = {}
-        self.index_path = index_path
-        self.index_offsets = None
+        self.nlist = nlist # The Number Of Centroids in each of the 2 Subspaces
+        self.dimension = dimension # The Dimension of the Vectors Const = 70
+        self.subspace_dim = dimension // 2 # The Dimension of each of the 2 Subspaces
+        self.vectors = vectors # The Vectors to be Indexed Only Used for Training
+        # The combination of the centroids of the 2 subspaces gives us 65536 centroids
+        self.centroids1 = None # The Centroids of the 1st Subspace Only Used for Training = 256
+        self.centroids2 = None # The Centroids of the 2nd Subspace Only Used for Training = 256
+        self.index_inverted_lists = {} # The Inverted Lists for the Multi-Index = 65536 Keys Each Key is a Tuple of 2 Centroids (C1,C2) and the Value is a List of Integers which are the Indices of the Vectors that are assigned to this key
+        self.index_path = index_path # The Path to the Index File / Practically Unused in the final state
+        self.index_offsets = None  # Loading Only The Top Level Index
         inverted_list_dir = os.path.join("DBIndexes", f"imi_index_{self.vectors.shape[0]//10**6}M")
         index_file_path = os.path.join(inverted_list_dir, "index_offsets.bin")
         with open(index_file_path, "rb") as f:
@@ -60,10 +56,13 @@ class IMIIndex(IndexingStrategy):
         print("Training complete!")
 
     def add(self):
+        # This Basically Assigns Each Vector to a Pair of centroids.
+        # So if the first half is close to C4 in the first subspace and the second half is close to C5 in the second subspace then this vector is assigned to the pair (C4,C5) = (4,5)
         print("Assigning vectors to clusters...")
         # Split vectors into two subspaces
         num_vectors = self.vectors.shape[0]
         batch_size = 500_000
+        # Divide the 70 dimensional vectors into 2*35 dimensional vectors
         subspace1 = self.vectors[:, :self.subspace_dim]
         subspace2 = self.vectors[:, self.subspace_dim:]
 
@@ -86,7 +85,7 @@ class IMIIndex(IndexingStrategy):
         print("Assignment complete!")
 
     def search(self, db, query_vector, top_k=5, nprobe=1, max_difference=10000, batch_limit=2000, pruning_factor=2250):
-
+        # Generator to yield batches and save memory
         def batch_numbers(numbers, max_difference, batch_limit):
             start_index = 0
             batch_count = 0
@@ -95,13 +94,16 @@ class IMIIndex(IndexingStrategy):
                 min_element = numbers[start_index]
                 end_index = start_index
 
+                # Returns the index of the first element greater than or equal to min_element + max_difference
                 end_index = np.searchsorted(numbers, min_element + max_difference, side='right')
                 end_index = min(end_index, n)
 
                 yield numbers[start_index:end_index]
+
                 batch_count += 1
                 start_index = end_index
 
+        # Function to process a batch of indices : 1- Retrieve the vectors from the database 2- Compute the cosine similarity 3- Return the top k
         def process_batch(batch):
             start_index = batch[0]
             end_index = batch[-1]
@@ -117,10 +119,14 @@ class IMIIndex(IndexingStrategy):
             # Check if there are more than top_k elements in the heap
             if len(distances) <= top_k:
                 return list(zip(distances, batch))
+            
+            # We use argpartition for efficiency as there's no need to sort the whole array so we get the top k elements in O(n) time 
             top_indices = np.argpartition(distances, top_k)[:top_k]
             top_indices = top_indices[np.argsort(distances[top_indices])]
             return list(zip(distances[top_indices], batch[top_indices]))
 
+
+        # This is useless but this function initially supported getting a Nx70 Queries Array and looped through them
         if query_vector.ndim == 1:
             query_vector = query_vector.reshape(1, -1)
 
@@ -131,6 +137,7 @@ class IMIIndex(IndexingStrategy):
         query_subspace1 = query_vector[:, :self.subspace_dim]
         query_subspace2 = query_vector[:, self.subspace_dim:]
 
+        # Reads The Centroids From The Disk
         centroids = self.load_centroids()
         centroids1 = centroids["centroids1"]
         centroids2 = centroids["centroids2"]
@@ -139,12 +146,12 @@ class IMIIndex(IndexingStrategy):
         subspace1_distances = cdist(query_subspace1, centroids1, metric="cosine").flatten()
         subspace2_distances = cdist(query_subspace2, centroids2, metric="cosine").flatten()
 
-        # Create a grid of combined distances using broadcasting
+        # Create a grid of combined distances using broadcasting to avoid memory redundancy
         combined_distances = subspace1_distances[:, None] + subspace2_distances[None, :]
 
         # Flatten combined distances and generate centroid pair indices
         combined_distances_flat = combined_distances.ravel()
-        centroid_pairs = np.indices((256, 256)).reshape(2, -1).T
+        centroid_pairs = np.indices((256, 256)).reshape(2, -1).T # This Produces a 2D array of all possible centroid pairs something like this [(0,0), (0,1), ..., (255,255)]
 
         # Select the top nprobe * nprobe centroid pairs
         top_indices = np.argpartition(combined_distances_flat, nprobe * nprobe)[:nprobe * nprobe]
@@ -197,6 +204,7 @@ class IMIIndex(IndexingStrategy):
 
 
     def build_index(self):
+        # Another Unused Function After Restructuring
         nq = self.vectors.shape[0]
         if os.path.exists(self.index_path):
             # self.load_index(self.index_path)
@@ -210,6 +218,7 @@ class IMIIndex(IndexingStrategy):
         return self
 
     def save_index(self, path: str):
+        # Was Used To Save The Initial State Which Was Restructured Later
         print(f"Saving index to {path}")
         data = {
             "centroids1": self.centroids1,
@@ -221,6 +230,7 @@ class IMIIndex(IndexingStrategy):
         print("Index saved successfully!")
 
     def load_index(self, path: str):
+        # We Stopped Using This It's Not Called Anywhere in the code
         # print(f"Loading index from {path}")
         with open(path, "rb") as f:
             data = pickle.load(f)
@@ -231,6 +241,7 @@ class IMIIndex(IndexingStrategy):
         return self
 
     def restructure_pickle(pickle_path, output_dir, size):
+        # This was used to restructure the initial pickle files to handle partial access as it was changed after the initial confirmation
         with open(pickle_path, "rb") as f:
             data = pickle.load(f)
 
@@ -244,6 +255,7 @@ class IMIIndex(IndexingStrategy):
         os.makedirs(inverted_list_dir, exist_ok=True)
 
         concatenated_values = []
+        # We Have 256 * 256 = 65536 Possible Keys For Each We Do Store where it starts and how many elements it has hence the 2 in the shape
         index_offsets = np.zeros((256 * 256, 2), dtype=np.int32)
 
         for key, value in data["index_inverted_lists"].items():
@@ -277,8 +289,14 @@ class IMIIndex(IndexingStrategy):
         inverted_list_dir = os.path.join("DBIndexes", f"imi_index_{self.vectors.shape[0]//10**6}M")
         concatenated_values_path = os.path.join(inverted_list_dir, "concatenated_values.bin")
 
+        # This can be read here and it won't affect the performance but why don't we abuse the fact that this is the top level index
+        # inverted_list_dir = os.path.join("DBIndexes", f"imi_index_{self.vectors.shape[0]//10**6}M")
+        # index_file_path = os.path.join(inverted_list_dir, "index_offsets.bin")
+        # with open(index_file_path, "rb") as f:
+        #     self.index_offsets = np.fromfile(f, dtype=np.int32).reshape(-1, 2)
 
 
+        # Sort The Keys For Batching Sequential Access
         total_length = 0
         keys = sorted(keys, key=lambda key: tuple(key) if isinstance(key, (list, np.ndarray)) else key)
         for key in keys:
@@ -289,11 +307,13 @@ class IMIIndex(IndexingStrategy):
 
         candidate_vectors = np.empty((total_length,), dtype=np.int32)
 
+
+        # Same as window generation technique used in the search function
         def batch_keys(keys, batch_size=20):
             for i in range(0, len(keys), batch_size):
                 yield keys[i:i+batch_size]
 
-        array_start = 0
+        array_start = 0 # Points at the first available index in the candidate_vectors array to be able to fill it with retrieved vectors' indices
         if keys is not None:
             for key_batch in batch_keys(keys):
                 batch_starts = []
@@ -316,9 +336,3 @@ class IMIIndex(IndexingStrategy):
                     array_start += length
 
         return candidate_vectors
-
-if __name__ == "__main__":
-    # Step 1: Load the pickle file
-    pickle_path = "DBIndexes/imi_index_20000000"
-    hdf5_path = "DBIndexes"
-    IMIIndex.restructure_pickle(pickle_path, hdf5_path, 20000000)
