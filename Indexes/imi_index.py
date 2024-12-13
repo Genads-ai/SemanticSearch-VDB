@@ -309,7 +309,7 @@ class IMIIndex(IndexingStrategy):
 
 
         # Same as window generation technique used in the search function
-        def batch_keys(keys, batch_size=25):
+        def batch_keys(keys, batch_size=35):
             for i in range(0, len(keys), batch_size):
                 yield keys[i:i+batch_size]
 
