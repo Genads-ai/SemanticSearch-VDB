@@ -15,7 +15,7 @@ N_PROBE = 55
 
 class VecDB:
     def __init__(self, database_file_path = "Databases/DB_1000000.dat", index_file_path = "index.dat", new_db = True, db_size = None) -> None:
-        print("Initializing the VecDB")
+        print("File Handle Changed")
         self.db_path = database_file_path
         self.index_path = index_file_path
         self.index = None
