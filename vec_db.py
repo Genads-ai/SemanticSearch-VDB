@@ -15,10 +15,11 @@ N_PROBE = 55
 
 class VecDB:
     def __init__(self, database_file_path = "Databases/DB_1000000.dat", index_file_path = "index.dat", new_db = True, db_size = None) -> None:
-        print("Problem Fixed")
+        print("Initializing the VecDB")
         self.db_path = database_file_path
         self.index_path = index_file_path
         self.index = None
+        # self.file_handle = open(self.db_path, 'r+b') if not new_db else None
         if new_db:
             if db_size is None:
                 raise ValueError("You need to provide the size of the database")
@@ -27,6 +28,8 @@ class VecDB:
                 os.remove(self.db_path)
             self.generate_database(db_size)
         else:
+            # if self.file_handle is None:
+            #     self.file_handle = open(self.db_path, 'r+b')
             if "ivf" in self.index_path:
                 self.index = self._build_index(ivf_adc_index.IVFADCIndex(vectors=self.get_all_rows(),nlist=256,dimension=70))
             else:
@@ -70,6 +73,7 @@ class VecDB:
 
     def get_sequential_block(self, left_index: int, right_index: int) -> np.ndarray:
         try:
+            file_handle = open(self.db_path, 'r+b')
             if left_index < 0 or right_index <= left_index:
                 raise ValueError("Invalid range: left_index must be >= 0 and right_index must be > left_index.")
 
@@ -82,9 +86,17 @@ class VecDB:
             byte_offset = np.int64(left_index) * np.int64(DIMENSION) * np.int64(ELEMENT_SIZE)
             byte_size = np.int64(num_vectors) * np.int64(DIMENSION) * np.int64(ELEMENT_SIZE)
 
+            # Seek to the start offset
+            file_handle.seek(byte_offset)
+
             # Read the required bytes
-            block = np.memmap(self.db_path, dtype=np.float32, mode='r', offset=byte_offset, shape=(num_vectors, DIMENSION))
-            
+            bytes_read = file_handle.read(byte_size)
+            if len(bytes_read) != byte_size:
+                raise IOError(f"Failed to read the complete block from {left_index} to {right_index}.")
+
+            # Convert bytes to NumPy array
+            block = np.frombuffer(bytes_read, dtype=np.float32).reshape((num_vectors, DIMENSION))
+
             return block
         except Exception as e:
             print(f"An error occurred while fetching the sequential block: {e}")
